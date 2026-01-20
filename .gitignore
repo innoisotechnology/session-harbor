@@ -1,0 +1,13 @@
+backend/node_modules
+backend/keys/*
+frontend/node_modules
+.env
+mysql/
+private.key
+backend/temp/*
+!backend/temp/.gitkeep
+.production.env
+node_modules
+dist/
+data/session-names.json
+data/pending-names.json

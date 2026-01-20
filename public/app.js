@@ -24,6 +24,9 @@ const sourceClaude = document.getElementById('sourceClaude');
 const sessionNameInput = document.getElementById('sessionNameInput');
 const saveNameButton = document.getElementById('saveNameButton');
 const newSessionButton = document.getElementById('newSessionButton');
+const deleteSessionButton = document.getElementById('deleteSessionButton');
+const statusButton = document.getElementById('statusButton');
+const nameEditor = document.getElementById('nameEditor');
 
 let activeTab = 'messages';
 let activeSessionData = null;
@@ -32,6 +35,38 @@ let selectedProject = '';
 let projectIndex = [];
 let filteredProjectIndex = [];
 let listMode = 'projects';
+let detailMode = 'session';
+let searchTimer = null;
+let pendingSessionRelPath = '';
+
+function readUrlState() {
+  const params = new URLSearchParams(window.location.search);
+  const source = params.get('source');
+  const project = params.get('project');
+  const session = params.get('session');
+  return {
+    source: source === 'codex' || source === 'claude' ? source : null,
+    project: project || '',
+    session: session || '',
+  };
+}
+
+function syncUrlState() {
+  const params = new URLSearchParams();
+  params.set('source', activeSource);
+  if (selectedProject) params.set('project', selectedProject);
+  if (state.active?.relPath) params.set('session', state.active.relPath);
+  const qs = params.toString();
+  const nextUrl = qs ? `?${qs}` : window.location.pathname;
+  window.history.replaceState(null, '', nextUrl);
+}
+
+function applySourceUi(source) {
+  sourceCodex.classList.toggle('active', source === 'codex');
+  sourceClaude.classList.toggle('active', source === 'claude');
+  rejoinButton.disabled = source !== 'codex';
+  focusButton.disabled = source !== 'codex';
+}
 
 function showProjectView() {
   listMode = 'projects';
@@ -57,8 +92,11 @@ function setActiveSession(session) {
   activeSessionData = null;
   sessionNameInput.value = session.name || '';
   saveNameButton.disabled = false;
+  detailMode = 'session';
+  nameEditor.classList.remove('is-hidden');
   renderList();
   renderDetail();
+  syncUrlState();
 }
 
 function getProjectKey(session) {
@@ -79,6 +117,7 @@ function renderProjects() {
     applyFilters();
     renderProjects();
     showSessionView();
+    syncUrlState();
   });
   projectList.appendChild(allButton);
 
@@ -95,6 +134,7 @@ function renderProjects() {
       applyFilters();
       renderProjects();
       showSessionView();
+      syncUrlState();
     });
     projectList.appendChild(item);
   });
@@ -106,7 +146,7 @@ function renderProjects() {
 }
 
 function applyFilters() {
-  const search = searchInput.value.trim().toLowerCase();
+  const search = searchInput.value.trim();
   const project = selectedProject;
 
   state.filtered = state.sessions.filter((session) => {
@@ -116,7 +156,7 @@ function applyFilters() {
       .filter(Boolean)
       .join(' ')
       .toLowerCase();
-    return haystack.includes(search);
+    return haystack.includes(search.toLowerCase());
   });
 
   if (state.active && !state.filtered.find((session) => session.relPath === state.active.relPath)) {
@@ -124,6 +164,21 @@ function applyFilters() {
     renderDetail();
   }
 
+  renderList();
+}
+
+async function searchSessions(query) {
+  const params = new URLSearchParams({
+    source: activeSource,
+    query
+  });
+  if (selectedProject) {
+    params.set('project', selectedProject);
+  }
+  const response = await fetch(`/api/search?${params.toString()}`);
+  const data = await response.json();
+  state.sessions = data.sessions || [];
+  state.filtered = state.sessions;
   renderList();
 }
 
@@ -140,12 +195,18 @@ function renderList() {
       item.classList.add('active');
     }
 
-    const title = session.name ? `${session.name} · ${session.fileName}` : session.fileName;
+    const title = session.name || session.fileName;
+    const messageLabel =
+      typeof session.messageCount === 'number' ? `${session.messageCount} msgs` : '— msgs';
+    const matchLabel =
+      typeof session.matchCount === 'number' ? `${session.matchCount} hits` : null;
     item.innerHTML = `
       <div class="session-title">${title}</div>
       <div class="session-meta">
         <span>${formatTimestamp(session.timestamp)}</span>
         <span>${session.project || session.cwd || 'Unknown project'}</span>
+        <span>${messageLabel}</span>
+        ${matchLabel ? `<span>${matchLabel}</span>` : ''}
       </div>
     `;
 
@@ -182,6 +243,14 @@ async function fetchProjects() {
   renderProjects();
 }
 
+function clearSearch() {
+  searchInput.value = '';
+  if (searchTimer) {
+    clearTimeout(searchTimer);
+    searchTimer = null;
+  }
+}
+
 async function renderDetail() {
   if (!state.active) {
     sessionDetail.innerHTML = '<p class="muted">Select a session to view its raw JSONL content.</p>';
@@ -189,11 +258,16 @@ async function renderDetail() {
     focusButton.disabled = true;
     saveNameButton.disabled = true;
     sessionNameInput.value = '';
+    deleteSessionButton.disabled = true;
+    if (detailMode === 'session') {
+      nameEditor.classList.remove('is-hidden');
+    }
     return;
   }
 
   rejoinButton.disabled = activeSource !== 'codex' || !state.active.id;
   focusButton.disabled = activeSource !== 'codex' || !state.active.id;
+  deleteSessionButton.disabled = false;
   sessionDetail.innerHTML = '<p class="muted">Loading session...</p>';
   const endpoint = activeSource === 'claude' ? '/api/claude/session' : '/api/session';
   const response = await fetch(`${endpoint}?file=${encodeURIComponent(state.active.relPath)}`);
@@ -224,13 +298,15 @@ async function renderDetail() {
         <div class="value">${state.active.id || meta.sessionId || 'Unknown'}</div>
       </div>
     </div>
-    ${renderDetailBody(data)}
+    <div class="detail-body">
+      ${renderDetailBody(data)}
+    </div>
   `;
 }
 
 function renderDetailBody(data) {
   if (activeTab === 'raw') {
-    return `<pre>${escapeHtml(data.content)}</pre>`;
+    return `<pre class="raw-content">${escapeHtml(data.content)}</pre>`;
   }
 
   const messages = Array.isArray(data.messages) ? data.messages : [];
@@ -262,7 +338,21 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;');
 }
 
-searchInput.addEventListener('input', applyFilters);
+searchInput.addEventListener('input', () => {
+  const query = searchInput.value.trim();
+  if (searchTimer) {
+    clearTimeout(searchTimer);
+  }
+  if (!query) {
+    fetchSessions();
+    return;
+  }
+  searchTimer = setTimeout(() => {
+    searchSessions(query).catch(() => {
+      sessionDetail.innerHTML = '<p class="muted">Search failed.</p>';
+    });
+  }, 250);
+});
 projectSearchInput.addEventListener('input', () => {
   const term = projectSearchInput.value.trim().toLowerCase();
   if (!term) {
@@ -336,12 +426,53 @@ saveNameButton.addEventListener('click', async () => {
     saveNameButton.disabled = false;
   }
 });
+statusButton.addEventListener('click', async () => {
+  detailMode = 'status';
+  nameEditor.classList.add('is-hidden');
+  sessionDetail.innerHTML = '<p class="muted">Loading status...</p>';
+  try {
+    const response = await fetch('/api/status');
+    const data = await response.json();
+    sessionDetail.innerHTML = renderStatusCard(data);
+  } catch (err) {
+    sessionDetail.innerHTML = '<p class="muted">Unable to load status.</p>';
+  }
+});
+deleteSessionButton.addEventListener('click', async () => {
+  if (!state.active) return;
+  const label = state.active.name || state.active.fileName || 'this session';
+  const confirmed = window.confirm(`Archive ${label}? This moves the session file to Archive.`);
+  if (!confirmed) return;
+  deleteSessionButton.disabled = true;
+  try {
+    await fetch('/api/archive-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source: activeSource,
+        relPath: state.active.relPath,
+      }),
+    });
+    state.active = null;
+    activeSessionData = null;
+    renderDetail();
+    await fetchSessions();
+    syncUrlState();
+  } catch (err) {
+    // noop
+  } finally {
+    deleteSessionButton.disabled = false;
+  }
+});
 newSessionButton.addEventListener('click', async () => {
   if (!selectedProject) return;
+  const label = `Session name (optional)`;
+  const name = window.prompt(label, '');
+  if (name === null) return;
   newSessionButton.disabled = true;
   try {
     const response = await fetch(
-      `/api/new-session?source=${encodeURIComponent(activeSource)}&cwd=${encodeURIComponent(selectedProject)}`
+      `/api/new-session?source=${encodeURIComponent(activeSource)}&cwd=${encodeURIComponent(selectedProject)}&name=${encodeURIComponent(name.trim())}`
     );
     if (!response.ok) {
       // noop
@@ -380,37 +511,140 @@ function switchTab(tab) {
           <div class="value">${state.active.id || meta.sessionId || 'Unknown'}</div>
         </div>
       </div>
-      ${renderDetailBody(activeSessionData)}
+      <div class="detail-body">
+        ${renderDetailBody(activeSessionData)}
+      </div>
     `;
   }
 }
 
 function setSource(source) {
   activeSource = source;
-  sourceCodex.classList.toggle('active', source === 'codex');
-  sourceClaude.classList.toggle('active', source === 'claude');
+  applySourceUi(source);
   state.active = null;
   activeSessionData = null;
   activeTab = 'messages';
   tabMessages.classList.add('active');
   tabRaw.classList.remove('active');
-  rejoinButton.disabled = source !== 'codex';
-  focusButton.disabled = source !== 'codex';
   saveNameButton.disabled = true;
   sessionNameInput.value = '';
+  deleteSessionButton.disabled = true;
+  detailMode = 'session';
+  nameEditor.classList.remove('is-hidden');
   selectedProject = '';
   sessionDetail.innerHTML = '<p class="muted">Select a session to view its raw JSONL content.</p>';
   showProjectView();
+  clearSearch();
   fetchSessions();
   fetchProjects();
+  syncUrlState();
 }
 
-fetchSessions().catch(() => {
-  sessionDetail.innerHTML = '<p class="muted">Failed to load sessions. Is the server running?</p>';
-});
+async function init() {
+  const urlState = readUrlState();
+  if (urlState.source) activeSource = urlState.source;
+  if (urlState.project) selectedProject = urlState.project;
+  if (urlState.session) pendingSessionRelPath = urlState.session;
 
-fetchProjects().catch(() => {
-  projectList.innerHTML = '<div class="empty">Failed to load projects.</div>';
-});
+  applySourceUi(activeSource);
+  showProjectView();
 
-showProjectView();
+  try {
+    await fetchSessions();
+  } catch (err) {
+    sessionDetail.innerHTML = '<p class="muted">Failed to load sessions. Is the server running?</p>';
+  }
+
+  try {
+    await fetchProjects();
+  } catch (err) {
+    projectList.innerHTML = '<div class="empty">Failed to load projects.</div>';
+  }
+
+  if (selectedProject || pendingSessionRelPath) {
+    showSessionView();
+  }
+
+  if (pendingSessionRelPath) {
+    const match = state.sessions.find((session) => session.relPath === pendingSessionRelPath);
+    if (match) {
+      if (!selectedProject) {
+        selectedProject = getProjectKey(match);
+        applyFilters();
+      }
+      setActiveSession(match);
+    }
+    pendingSessionRelPath = '';
+  }
+
+  syncUrlState();
+}
+
+init();
+
+function renderStatusCard(data) {
+  const account = data.account || {};
+  const rate = data.rateLimits || {};
+  const primary = rate.primary || {};
+  const secondary = rate.secondary || {};
+  const credits = rate.credits || {};
+
+  const primaryLeft = typeof primary.used_percent === 'number' ? 100 - primary.used_percent : null;
+  const secondaryLeft = typeof secondary.used_percent === 'number' ? 100 - secondary.used_percent : null;
+
+  return `
+    <div class="status-card">
+      <div class="status-header">
+        <div class="status-title">Codex Status</div>
+        <div class="count">${data.cliVersion || 'CLI unknown'}</div>
+      </div>
+      <div class="status-grid">
+        <div class="status-block">
+          <h3>Model</h3>
+          <p>${data.model || 'Unknown'}</p>
+        </div>
+        <div class="status-block">
+          <h3>Directory</h3>
+          <p>${data.cwd || 'Unknown'}</p>
+        </div>
+        <div class="status-block">
+          <h3>Approval</h3>
+          <p>${data.approval || 'Unknown'}</p>
+        </div>
+        <div class="status-block">
+          <h3>Sandbox</h3>
+          <p>${data.sandbox || 'Unknown'}</p>
+        </div>
+        <div class="status-block">
+          <h3>Account</h3>
+          <p>${account.email || 'Unknown'}</p>
+          <p class="muted">${account.plan || 'Plan unknown'}</p>
+        </div>
+        <div class="status-block">
+          <h3>Session</h3>
+          <p>${data.sessionId || 'Unknown'}</p>
+        </div>
+      </div>
+      <div class="status-block">
+        <h3>Limits</h3>
+        ${renderLimitRow('5h limit', primaryLeft, primary.resets_at)}
+        ${renderLimitRow('Weekly limit', secondaryLeft, secondary.resets_at)}
+        ${credits.has_credits ? `<div class="limit-row"><span>Credits</span><span>${credits.unlimited ? 'Unlimited' : credits.balance || '—'}</span></div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderLimitRow(label, leftPercent, resetsAt) {
+  if (leftPercent === null) {
+    return `<div class="limit-row"><span>${label}</span><span>Unavailable</span></div>`;
+  }
+  const clamped = Math.max(0, Math.min(100, leftPercent));
+  return `
+    <div class="limit-row">
+      <span>${label}</span>
+      <span>${clamped.toFixed(0)}% left ${resetsAt ? `(resets ${resetsAt})` : ''}</span>
+      <div class="limit-bar"><span style="width:${clamped}%;"></span></div>
+    </div>
+  `;
+}

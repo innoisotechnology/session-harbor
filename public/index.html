@@ -9,19 +9,27 @@
   <body>
     <div class="page">
       <header class="header">
-        <div>
-          <p class="eyebrow">Session Browser</p>
-          <h1>Sessions</h1>
-          <div class="source-toggle">
-            <button id="sourceCodex" class="source-button active" type="button">Codex</button>
-            <button id="sourceClaude" class="source-button" type="button">Claude</button>
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <div class="mark-ring"></div>
+            <div class="mark-core"></div>
+          </div>
+          <div class="brand-copy">
+            <p class="eyebrow">Session Harbor</p>
+            <h1>Dock, scan, and relaunch your AI sessions.</h1>
+            <p class="subtitle">A local harbor for Codex and Claude session logs.</p>
           </div>
         </div>
         <div class="controls">
           <label class="control">
-            <span>Search</span>
+            <span>Search sessions</span>
             <input id="searchInput" type="text" placeholder="cwd, id, or filename" />
           </label>
+          <button id="statusButton" class="ghost" type="button">Status</button>
+          <div class="source-toggle">
+            <button id="sourceCodex" class="source-button active" type="button">Codex</button>
+            <button id="sourceClaude" class="source-button" type="button">Claude</button>
+          </div>
         </div>
       </header>
 
@@ -48,6 +56,7 @@
               </div>
               <div class="panel-buttons">
                 <button id="newSessionButton" class="ghost" type="button">New Session</button>
+                <button id="deleteSessionButton" class="ghost danger" type="button">Archive</button>
                 <span id="countLabel" class="count">0 sessions</span>
               </div>
             </div>
@@ -73,7 +82,7 @@
           <div id="sessionDetail" class="session-detail">
             <p class="muted">Select a session to view its raw JSONL content.</p>
           </div>
-          <div class="name-editor">
+          <div id="nameEditor" class="name-editor">
             <label class="control">
               <span>Session name</span>
               <input id="sessionNameInput" type="text" placeholder="Add a label" />
