@@ -1,5 +1,6 @@
 export default {
-  content: ['./index.html', './src/**/*.{js,vue}'],
+  darkMode: 'class',
+  content: ['./index.html', './src/**/*.{js,ts,vue}'],
   theme: {
     extend: {
       colors: {

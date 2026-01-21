@@ -13,10 +13,12 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const FRONTEND_DIR = path.join(__dirname, 'frontend', 'dist');
 const SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
 const CLAUDE_DIR = path.join(os.homedir(), '.claude', 'projects');
+const COPILOT_DIR = path.join(os.homedir(), '.copilot', 'session-state');
 const SESSION_EXT = '.jsonl';
 const NAMES_FILE = path.join(__dirname, 'data', 'session-names.json');
 const PENDING_FILE = path.join(__dirname, 'data', 'pending-names.json');
 const REPORTS_DIR = path.join(__dirname, 'reports');
+const FEEDBACK_FILE = path.join(__dirname, 'data', 'feedback.jsonl');
 const CODEX_HOME = path.join(os.homedir(), '.codex');
 const CONFIG_FILE = path.join(CODEX_HOME, 'config.toml');
 const AUTH_FILE = path.join(CODEX_HOME, 'auth.json');
@@ -26,6 +28,8 @@ let cachedSessions: any[] = [];
 let lastScanAt = 0;
 let cachedClaudeSessions: any[] = [];
 let lastClaudeScanAt = 0;
+let cachedCopilotSessions: any[] = [];
+let lastCopilotScanAt = 0;
 const CACHE_TTL_MS = 10_000;
 
 async function listSessionFiles(dir: string): Promise<string[]> {
@@ -334,6 +338,37 @@ function parseClaudeMessages(rawContent) {
   return messages;
 }
 
+function parseCopilotMessages(rawContent) {
+  const messages = [];
+  if (!rawContent) return messages;
+
+  const lines = rawContent.split(/\r?\n/).filter(Boolean);
+  for (const line of lines) {
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch (err) {
+      continue;
+    }
+
+    if (!parsed || !parsed.type) continue;
+    if (parsed.type !== 'user.message' && parsed.type !== 'assistant.message') continue;
+
+    const data = parsed.data || {};
+    const role = parsed.type === 'user.message' ? 'user' : 'assistant';
+    const text = String(data.content || data.transformedContent || '').trim();
+    if (!text) continue;
+
+    messages.push({
+      role,
+      timestamp: parsed.timestamp || null,
+      text,
+    });
+  }
+
+  return messages;
+}
+
 function extractClaudeMeta(rawContent, fallbackId) {
   const meta = { sessionId: fallbackId || null, cwd: null, gitBranch: null };
   if (!rawContent) return meta;
@@ -363,6 +398,35 @@ function extractClaudeMeta(rawContent, fallbackId) {
   }
 
   return meta;
+}
+
+type CopilotWorkspace = {
+  id?: string;
+  cwd?: string;
+  repository?: string;
+  branch?: string;
+  created_at?: string;
+  updated_at?: string;
+  summary?: string;
+  [key: string]: string | undefined;
+};
+
+async function readCopilotWorkspace(workspacePath): Promise<CopilotWorkspace> {
+  try {
+    const raw = await fs.promises.readFile(workspacePath, 'utf8');
+    const lines = raw.split(/\r?\n/).filter(Boolean);
+    const meta: CopilotWorkspace = {};
+    lines.forEach((line) => {
+      const match = line.match(/^\s*([a-z_]+)\s*:\s*(.+)\s*$/i);
+      if (!match) return;
+      const key = match[1];
+      const value = match[2];
+      meta[key] = value;
+    });
+    return meta;
+  } catch (err) {
+    return {};
+  }
 }
 
 async function getClaudeProjectInfo(filePath, fallbackProject) {
@@ -493,6 +557,68 @@ async function loadClaudeSessions() {
   return sessions;
 }
 
+async function loadCopilotSessions() {
+  let entries = [];
+  try {
+    entries = await fs.promises.readdir(COPILOT_DIR, { withFileTypes: true });
+  } catch (err) {
+    return [];
+  }
+
+  const sessions = [];
+  const names = await loadSessionNames();
+  const pending = await loadPendingNames();
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const sessionDir = path.join(COPILOT_DIR, entry.name);
+    const eventsPath = path.join(sessionDir, 'events.jsonl');
+    const workspacePath = path.join(sessionDir, 'workspace.yaml');
+    let stat;
+    try {
+      stat = await fs.promises.stat(eventsPath);
+    } catch (err) {
+      continue;
+    }
+
+    const workspace = await readCopilotWorkspace(workspacePath);
+    const timestamp = workspace.updated_at
+      || workspace.created_at
+      || (stat.mtime ? new Date(stat.mtime).toISOString() : null);
+    const messageCount = await countJsonlMessages(eventsPath, (entry) => {
+      return entry?.type === 'user.message' || entry?.type === 'assistant.message';
+    });
+
+    const relPath = path.relative(COPILOT_DIR, eventsPath);
+    sessions.push({
+      id: workspace.id || entry.name,
+      timestamp,
+      cwd: workspace.cwd || null,
+      project: workspace.repository || null,
+      relPath,
+      fileName: path.basename(eventsPath),
+      name: names[buildNameKey('copilot', relPath)] || '',
+      messageCount,
+    });
+  }
+
+  sessions.sort((a, b) => {
+    const aTime = a.timestamp ? Date.parse(a.timestamp) : 0;
+    const bTime = b.timestamp ? Date.parse(b.timestamp) : 0;
+    return bTime - aTime;
+  });
+
+  const pendingChanged = applyPendingNames('copilot', sessions, names, pending);
+  if (pendingChanged.changed) {
+    await saveSessionNames(names);
+    await savePendingNames(pendingChanged.pending);
+  }
+
+  cachedCopilotSessions = sessions;
+  lastCopilotScanAt = Date.now();
+  return sessions;
+}
+
 async function getSessions() {
   if (!cachedSessions.length || Date.now() - lastScanAt > CACHE_TTL_MS) {
     return loadSessions();
@@ -505,6 +631,13 @@ async function getClaudeSessions() {
     return loadClaudeSessions();
   }
   return cachedClaudeSessions;
+}
+
+async function getCopilotSessions() {
+  if (!cachedCopilotSessions.length || Date.now() - lastCopilotScanAt > CACHE_TTL_MS) {
+    return loadCopilotSessions();
+  }
+  return cachedCopilotSessions;
 }
 
 function sendJson(res, status, payload) {
@@ -581,10 +714,19 @@ function isSafeClaudePath(relPath) {
   return resolved.startsWith(base);
 }
 
+function isSafeCopilotPath(relPath) {
+  if (!relPath) return false;
+  const resolved = path.resolve(COPILOT_DIR, relPath);
+  const base = path.resolve(COPILOT_DIR) + path.sep;
+  return resolved.startsWith(base);
+}
+
 async function archiveSessionFile(source, relPath) {
   const archiveDir = source === 'claude'
     ? path.join(CLAUDE_DIR, 'Archive')
-    : path.join(SESSIONS_DIR, 'Archive');
+    : source === 'copilot'
+      ? path.join(COPILOT_DIR, 'Archive')
+      : path.join(SESSIONS_DIR, 'Archive');
 
   await fs.promises.mkdir(archiveDir, { recursive: true });
 
@@ -598,6 +740,17 @@ async function archiveSessionFile(source, relPath) {
     return;
   }
 
+  if (source === 'copilot') {
+    if (!isSafeCopilotPath(relPath)) {
+      throw new Error('Invalid path');
+    }
+    const fullPath = path.resolve(COPILOT_DIR, relPath);
+    const sessionDir = path.dirname(fullPath);
+    const destPath = path.join(archiveDir, path.basename(sessionDir));
+    await fs.promises.rename(sessionDir, destPath);
+    return;
+  }
+
   if (!isSafeSessionPath(relPath)) {
     throw new Error('Invalid path');
   }
@@ -608,6 +761,9 @@ async function archiveSessionFile(source, relPath) {
 
 function getSessionProject(session, source) {
   if (source === 'claude') {
+    return session.project || session.cwd || '';
+  }
+  if (source === 'copilot') {
     return session.project || session.cwd || '';
   }
   return session.cwd || session.project || '';
@@ -657,6 +813,17 @@ function getSearchMatcher(source, queryLower) {
       if (entry.type !== 'user' && entry.type !== 'assistant') return null;
       const message = entry.message || {};
       const text = normalizeMessageContent(message.content).trim();
+      if (!text) return null;
+      return text.toLowerCase().includes(queryLower) ? text : null;
+    };
+  }
+
+  if (source === 'copilot') {
+    return (entry) => {
+      if (!entry || !entry.type) return null;
+      if (entry.type !== 'user.message' && entry.type !== 'assistant.message') return null;
+      const data = entry.data || {};
+      const text = String(data.content || data.transformedContent || '').trim();
       if (!text) return null;
       return text.toLowerCase().includes(queryLower) ? text : null;
     };
@@ -899,6 +1066,25 @@ async function readReportRecommendations(reportName) {
   }
 }
 
+async function readFeedbackEntries() {
+  try {
+    const raw = await fs.promises.readFile(FEEDBACK_FILE, 'utf8');
+    return raw
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch (err) {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  } catch (err) {
+    return [];
+  }
+}
+
 function resolveStaticDir() {
   try {
     if (fs.existsSync(FRONTEND_DIR)) {
@@ -946,9 +1132,29 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (pathname === '/api/copilot/sessions') {
+    const search = (parsedUrl.query.search || '').toString().toLowerCase();
+    const sessions = await getCopilotSessions();
+    const filtered = search
+      ? sessions.filter((session) => {
+          const haystack = [session.fileName, session.project, session.cwd, session.id, session.relPath]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
+          return haystack.includes(search);
+        })
+      : sessions;
+    sendJson(res, 200, { sessions: filtered });
+    return;
+  }
+
   if (pathname === '/api/projects') {
     const source = (parsedUrl.query.source || 'codex').toString();
-    const sessions = source === 'claude' ? await getClaudeSessions() : await getSessions();
+    const sessions = source === 'claude'
+      ? await getClaudeSessions()
+      : source === 'copilot'
+        ? await getCopilotSessions()
+        : await getSessions();
     const counts = new Map();
     sessions.forEach((session) => {
       const key = session.project || session.cwd || 'Unknown';
@@ -986,6 +1192,19 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (pathname === '/api/feedback-log') {
+    const source = (parsedUrl.query.source || '').toString();
+    const relPath = (parsedUrl.query.relPath || '').toString();
+    const entries = await readFeedbackEntries();
+    const filtered = entries.filter((entry) => {
+      if (source && entry.source !== source) return false;
+      if (relPath && entry.relPath !== relPath) return false;
+      return true;
+    });
+    sendJson(res, 200, { entries: filtered.reverse().slice(0, 200) });
+    return;
+  }
+
   if (pathname === '/api/search') {
     const source = (parsedUrl.query.source || 'codex').toString();
     const query = (parsedUrl.query.query || '').toString().trim();
@@ -995,7 +1214,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const sessions = source === 'claude' ? await getClaudeSessions() : await getSessions();
+    const sessions = source === 'claude'
+      ? await getClaudeSessions()
+      : source === 'copilot'
+        ? await getCopilotSessions()
+        : await getSessions();
     const filtered = project
       ? sessions.filter((session) => {
           const projectKey = session.project || session.cwd || '';
@@ -1010,7 +1233,9 @@ const server = http.createServer(async (req, res) => {
     for (const session of filtered) {
       const fullPath = source === 'claude'
         ? path.resolve(CLAUDE_DIR, session.relPath)
-        : path.resolve(SESSIONS_DIR, session.relPath);
+        : source === 'copilot'
+          ? path.resolve(COPILOT_DIR, session.relPath)
+          : path.resolve(SESSIONS_DIR, session.relPath);
       let matchInfo;
       try {
         matchInfo = await searchJsonlMessages(fullPath, matcher);
@@ -1067,6 +1292,31 @@ const server = http.createServer(async (req, res) => {
         messages,
         messageCount: messages.length,
         meta,
+      });
+    } catch (err) {
+      sendJson(res, 404, { error: 'File not found.' });
+    }
+    return;
+  }
+
+  if (pathname === '/api/copilot/session') {
+    const relPath = (parsedUrl.query.file || '').toString();
+    if (!isSafeCopilotPath(relPath)) {
+      sendJson(res, 400, { error: 'Invalid file path.' });
+      return;
+    }
+
+    const fullPath = path.resolve(COPILOT_DIR, relPath);
+    const fallbackId = relPath.split(path.sep)[0];
+    try {
+      const content = await fs.promises.readFile(fullPath, 'utf8');
+      const messages = parseCopilotMessages(content);
+      sendJson(res, 200, {
+        relPath,
+        content,
+        messages,
+        messageCount: messages.length,
+        meta: { sessionId: fallbackId }
       });
     } catch (err) {
       sendJson(res, 404, { error: 'File not found.' });
@@ -1140,6 +1390,9 @@ const server = http.createServer(async (req, res) => {
     } else if (source === 'claude') {
       cachedClaudeSessions = [];
       lastClaudeScanAt = 0;
+    } else if (source === 'copilot') {
+      cachedCopilotSessions = [];
+      lastCopilotScanAt = 0;
     }
 
     sendJson(res, 200, { ok: true });
@@ -1176,6 +1429,9 @@ const server = http.createServer(async (req, res) => {
       } else if (source === 'claude') {
         cachedClaudeSessions = [];
         lastClaudeScanAt = 0;
+      } else if (source === 'copilot') {
+        cachedCopilotSessions = [];
+        lastCopilotScanAt = 0;
       }
       sendJson(res, 200, { ok: true });
     } catch (err) {
@@ -1190,6 +1446,11 @@ const server = http.createServer(async (req, res) => {
     const name = (parsedUrl.query.name || '').toString().trim();
     if (!cwd) {
       sendJson(res, 400, { error: 'cwd is required.' });
+      return;
+    }
+
+    if (source === 'copilot') {
+      sendJson(res, 400, { error: 'Copilot sessions must be started from the Copilot CLI.' });
       return;
     }
 
@@ -1256,6 +1517,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     sendJson(res, 200, {
+      source: 'codex',
       model: config.model || null,
       reasoningEffort: config.effort || null,
       reasoningSummaries: config.summary || null,
@@ -1269,6 +1531,32 @@ const server = http.createServer(async (req, res) => {
         plan
       },
       rateLimits: rateLimits || null
+    });
+    return;
+  }
+
+  if (pathname === '/api/claude/status') {
+    const latest = (await getClaudeSessions())[0];
+    sendJson(res, 200, {
+      source: 'claude',
+      cwd: latest?.cwd || null,
+      sessionId: latest?.id || null,
+      cliVersion: null,
+      model: null,
+      account: {}
+    });
+    return;
+  }
+
+  if (pathname === '/api/copilot/status') {
+    const latest = (await getCopilotSessions())[0];
+    sendJson(res, 200, {
+      source: 'copilot',
+      cwd: latest?.cwd || null,
+      sessionId: latest?.id || null,
+      cliVersion: null,
+      model: null,
+      account: {}
     });
     return;
   }

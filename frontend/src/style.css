@@ -6,6 +6,10 @@
   color-scheme: light;
 }
 
+html.dark {
+  color-scheme: dark;
+}
+
 body {
   font-family: 'Space Grotesk', 'Futura', 'Trebuchet MS', sans-serif;
 }
