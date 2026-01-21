@@ -295,28 +295,85 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 
-const sessions = ref([]);
-const filteredSessions = ref([]);
-const projects = ref([]);
-const filteredProjects = ref([]);
-const activeSession = ref(null);
-const activeSessionDetail = ref(null);
-const activeSource = ref('codex');
-const listMode = ref('projects');
-const detailMode = ref('session');
-const activeTab = ref('messages');
+type Session = {
+  id?: string;
+  timestamp?: string;
+  cwd?: string;
+  project?: string;
+  relPath: string;
+  fileName: string;
+  name?: string;
+  messageCount?: number;
+  matchCount?: number;
+};
+
+type SessionMessage = {
+  role: string;
+  timestamp?: string;
+  text: string;
+};
+
+type SessionDetail = {
+  relPath: string;
+  content: string;
+  messages: SessionMessage[];
+  meta?: { sessionId?: string; cwd?: string };
+};
+
+type ProjectSummary = {
+  path: string;
+  count: number;
+};
+
+type StatusPayload = {
+  source: string;
+  model?: string;
+  cliVersion?: string;
+  account?: { email?: string; tier?: string };
+};
+
+type ReportSummary = {
+  name: string;
+  createdAt?: string;
+  hasSummary?: boolean;
+};
+
+type Recommendation = {
+  id: string;
+  title: string;
+  rationale?: string;
+  snippet?: string;
+  session?: string;
+  tags?: string[];
+};
+
+type RecommendationsPayload = {
+  tagsSummary?: Record<string, number>;
+  observations?: Recommendation[];
+};
+
+const sessions = ref<Session[]>([]);
+const filteredSessions = ref<Session[]>([]);
+const projects = ref<ProjectSummary[]>([]);
+const filteredProjects = ref<ProjectSummary[]>([]);
+const activeSession = ref<Session | null>(null);
+const activeSessionDetail = ref<SessionDetail | null>(null);
+const activeSource = ref<'codex' | 'claude'>('codex');
+const listMode = ref<'projects' | 'sessions'>('projects');
+const detailMode = ref<'session' | 'status' | 'reports'>('session');
+const activeTab = ref<'messages' | 'raw'>('messages');
 const selectedProject = ref('');
 const searchTerm = ref('');
 const projectSearch = ref('');
 const sessionName = ref('');
-const statusData = ref(null);
-const reports = ref([]);
-const activeReport = ref(null);
+const statusData = ref<StatusPayload | null>(null);
+const reports = ref<ReportSummary[]>([]);
+const activeReport = ref<ReportSummary | null>(null);
 const reportSummary = ref('');
-const reportRecommendations = ref(null);
+const reportRecommendations = ref<RecommendationsPayload | null>(null);
 let searchTimer = null;
 
 const totalProjectsCount = computed(() => filteredProjects.value.reduce((sum, item) => sum + item.count, 0));

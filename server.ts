@@ -1,13 +1,13 @@
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const url = require('url');
-const os = require('os');
-const { spawn } = require('child_process');
-const readline = require('readline');
-const https = require('https');
+import http, { IncomingMessage, ServerResponse } from 'http';
+import fs from 'fs';
+import path from 'path';
+import url from 'url';
+import os from 'os';
+import { spawn } from 'child_process';
+import readline from 'readline';
+import https from 'https';
 
-const PORT = process.env.PORT || 3434;
+const PORT = Number(process.env.PORT) || 3434;
 const HOST = process.env.HOST || '127.0.0.1';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const FRONTEND_DIR = path.join(__dirname, 'frontend', 'dist');
@@ -22,13 +22,13 @@ const CONFIG_FILE = path.join(CODEX_HOME, 'config.toml');
 const AUTH_FILE = path.join(CODEX_HOME, 'auth.json');
 const VERSION_FILE = path.join(CODEX_HOME, 'version.json');
 
-let cachedSessions = [];
+let cachedSessions: any[] = [];
 let lastScanAt = 0;
-let cachedClaudeSessions = [];
+let cachedClaudeSessions: any[] = [];
 let lastClaudeScanAt = 0;
 const CACHE_TTL_MS = 10_000;
 
-async function listSessionFiles(dir) {
+async function listSessionFiles(dir: string): Promise<string[]> {
   let entries = [];
   try {
     entries = await fs.promises.readdir(dir, { withFileTypes: true });
@@ -48,7 +48,7 @@ async function listSessionFiles(dir) {
   return files;
 }
 
-async function readFirstLine(filePath) {
+async function readFirstLine(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
     let buffer = '';
@@ -84,7 +84,7 @@ async function readFirstLine(filePath) {
   });
 }
 
-async function readUpToLines(filePath, maxLines, maxBytes) {
+async function readUpToLines(filePath: string, maxLines: number, maxBytes: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
     let buffer = '';
@@ -128,7 +128,7 @@ async function readUpToLines(filePath, maxLines, maxBytes) {
   });
 }
 
-async function countJsonlMessages(filePath, matcher) {
+async function countJsonlMessages(filePath: string, matcher: (entry: any) => boolean): Promise<number> {
   return new Promise((resolve, reject) => {
     let count = 0;
     const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
@@ -153,7 +153,7 @@ async function countJsonlMessages(filePath, matcher) {
   });
 }
 
-async function searchJsonlMessages(filePath, matcher) {
+async function searchJsonlMessages(filePath: string, matcher: (entry: any) => string | null): Promise<{ count: number; firstMatch: string | null }> {
   return new Promise((resolve, reject) => {
     let count = 0;
     let firstMatch = null;
@@ -191,7 +191,7 @@ function toRelativeClaudePath(filePath) {
   return path.relative(CLAUDE_DIR, filePath);
 }
 
-async function loadSessionNames() {
+async function loadSessionNames(): Promise<Record<string, string>> {
   try {
     const raw = await fs.promises.readFile(NAMES_FILE, 'utf8');
     const parsed = JSON.parse(raw);
@@ -201,12 +201,12 @@ async function loadSessionNames() {
   }
 }
 
-async function saveSessionNames(names) {
+async function saveSessionNames(names: Record<string, string>): Promise<void> {
   await fs.promises.mkdir(path.dirname(NAMES_FILE), { recursive: true });
   await fs.promises.writeFile(NAMES_FILE, JSON.stringify(names, null, 2));
 }
 
-async function loadPendingNames() {
+async function loadPendingNames(): Promise<any[]> {
   try {
     const raw = await fs.promises.readFile(PENDING_FILE, 'utf8');
     const parsed = JSON.parse(raw);
@@ -216,7 +216,7 @@ async function loadPendingNames() {
   }
 }
 
-async function savePendingNames(pending) {
+async function savePendingNames(pending: any[]): Promise<void> {
   await fs.promises.mkdir(path.dirname(PENDING_FILE), { recursive: true });
   await fs.promises.writeFile(PENDING_FILE, JSON.stringify(pending, null, 2));
 }
@@ -516,7 +516,7 @@ function sendJson(res, status, payload) {
   res.end(body);
 }
 
-async function readJsonBody(req) {
+async function readJsonBody(req: IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', (chunk) => {
@@ -774,8 +774,8 @@ function fetchJson(url, headers) {
   });
 }
 
-function openTerminalWithCommand(command) {
-  return new Promise((resolve, reject) => {
+function openTerminalWithCommand(command: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     const script = [
       'tell application "Terminal"',
       'activate',
@@ -795,8 +795,8 @@ function openTerminalWithCommand(command) {
   });
 }
 
-function focusTerminalTabByTitle(titleNeedle) {
-  return new Promise((resolve, reject) => {
+function focusTerminalTabByTitle(titleNeedle: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     const script = [
       'set needle to ' + JSON.stringify(titleNeedle),
       'tell application "Terminal"',

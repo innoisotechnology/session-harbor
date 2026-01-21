@@ -1,10 +1,8 @@
 #!/usr/bin/env node
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const readline = require('readline');
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import readline from 'readline';
 
 const CODEX_DIR = path.join(os.homedir(), '.codex', 'sessions');
 const CLAUDE_DIR = path.join(os.homedir(), '.claude', 'projects');
@@ -322,9 +320,9 @@ function extractRepoSignals(rawLines) {
   return signals;
 }
 
-function gatherRawLines(filePath) {
+function gatherRawLines(filePath: string): Promise<string[]> {
   return new Promise((resolve, reject) => {
-    const lines = [];
+    const lines: string[] = [];
     const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
     const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
     rl.on('line', (line) => lines.push(line));
@@ -576,7 +574,7 @@ function printHelp() {
   console.log(text.join('\n'));
 }
 
-async function listSessionFiles(dir) {
+async function listSessionFiles(dir: string): Promise<string[]> {
   let entries = [];
   try {
     entries = await fs.promises.readdir(dir, { withFileTypes: true });
@@ -595,7 +593,7 @@ async function listSessionFiles(dir) {
   return files;
 }
 
-async function readFirstLine(filePath) {
+async function readFirstLine(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
     let buffer = '';
@@ -658,9 +656,11 @@ function normalizeMessageContent(content) {
   return parts.join('\n');
 }
 
-async function readMessages(filePath, source) {
+type ParsedMessage = { role: string; text: string; timestamp?: string | null };
+
+async function readMessages(filePath: string, source: string): Promise<ParsedMessage[]> {
   return new Promise((resolve, reject) => {
-    const messages = [];
+    const messages: ParsedMessage[] = [];
     const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
     const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
 
@@ -890,9 +890,18 @@ function formatTimestamp(value) {
   return date.toISOString();
 }
 
-async function getCodexSessions() {
+type SessionEntry = {
+  source: string;
+  id: string | null;
+  timestamp: string | null;
+  cwd: string | null;
+  relPath: string;
+  filePath: string;
+};
+
+async function getCodexSessions(): Promise<SessionEntry[]> {
   const files = await listSessionFiles(CODEX_DIR);
-  const sessions = [];
+  const sessions: SessionEntry[] = [];
   for (const filePath of files) {
     let firstLine = '';
     try {
@@ -901,7 +910,7 @@ async function getCodexSessions() {
       continue;
     }
     if (!firstLine) continue;
-    let parsed;
+    let parsed: any;
     try {
       parsed = JSON.parse(firstLine);
     } catch (err) {
@@ -920,9 +929,9 @@ async function getCodexSessions() {
   return sessions;
 }
 
-async function getClaudeSessions() {
+async function getClaudeSessions(): Promise<SessionEntry[]> {
   const files = await listSessionFiles(CLAUDE_DIR);
-  const sessions = [];
+  const sessions: SessionEntry[] = [];
   for (const filePath of files) {
     let stat;
     try {
@@ -1074,7 +1083,7 @@ async function main() {
   const outDir = args.outDir || path.join(process.cwd(), 'reports', `session-review-${Date.now()}`);
   ensureDir(outDir);
 
-  let sessions = [];
+  let sessions: SessionEntry[] = [];
   if (sources.includes('codex')) {
     sessions = sessions.concat(await getCodexSessions());
   }
@@ -1087,10 +1096,10 @@ async function main() {
     sessions = sessions.slice(0, args.limit);
   }
 
-  const results = [];
+  const results: any[] = [];
   for (const session of sessions) {
-    let messages = [];
-    let rawLines = [];
+    let messages: ParsedMessage[] = [];
+    let rawLines: string[] = [];
     try {
       messages = await readMessages(session.filePath, session.source);
       rawLines = await gatherRawLines(session.filePath);
