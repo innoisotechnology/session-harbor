@@ -1,200 +1,279 @@
 <template>
-  <main class="grid gap-6 px-8 pb-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
-    <section class="rounded-2xl border border-slate-200 bg-white/80 p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900/80">
-      <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <label class="flex flex-1 flex-col text-sm text-slate-500 dark:text-slate-400">
-          <span>Search sessions</span>
+  <main class="flex h-[calc(100vh-88px)] gap-px bg-surface-200 dark:bg-surface-800">
+    <!-- Left Panel: Projects/Sessions List -->
+    <section class="flex w-80 flex-col bg-surface-50 dark:bg-surface-900">
+      <!-- Search & Actions -->
+      <div class="flex items-center gap-2 border-b border-surface-200 p-3 dark:border-surface-800">
+        <div class="relative flex-1">
+          <svg class="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
           <input
             v-model="searchTerm"
             type="text"
-            placeholder="cwd, id, or filename"
-            class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-inner dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+            placeholder="Search sessions..."
+            class="w-full rounded-md border border-surface-200 bg-white py-1.5 pl-8 pr-3 text-sm text-surface-900 placeholder:text-surface-400 focus:border-terminal-400 focus:outline-none dark:border-surface-700 dark:bg-surface-800 dark:text-surface-100"
           />
-        </label>
-        <button class="rounded-full border border-slate-200 px-4 py-2 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-300" @click="reloadAll">
-          Reload
+        </div>
+        <button
+          class="flex h-8 w-8 items-center justify-center rounded-md border border-surface-200 text-surface-500 transition-colors hover:bg-surface-100 hover:text-surface-700 dark:border-surface-700 dark:hover:bg-surface-800 dark:hover:text-surface-200"
+          @click="reloadAll"
+          title="Reload"
+        >
+          <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
         </button>
       </div>
 
-      <div v-if="listMode === 'projects'" class="space-y-4">
-        <div class="flex items-center justify-between">
-          <h2 class="text-lg font-semibold">Projects</h2>
+      <!-- Projects View -->
+      <div v-if="listMode === 'projects'" class="flex flex-1 flex-col overflow-hidden">
+        <div class="flex items-center justify-between border-b border-surface-100 px-3 py-2 dark:border-surface-800">
+          <span class="text-2xs font-medium uppercase tracking-wider text-surface-400">Projects</span>
+          <span class="font-mono text-2xs text-surface-400">{{ filteredProjects.length }}</span>
         </div>
-        <label class="flex flex-col text-sm text-slate-500 dark:text-slate-400">
-          <span>Find a project</span>
-          <input
-            v-model="projectSearch"
-            type="text"
-            placeholder="Type to filter projects"
-            class="mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-          />
-        </label>
-        <div class="max-h-[520px] space-y-2 overflow-auto pr-2">
+
+        <div class="flex-1 overflow-y-auto scrollbar-thin p-2">
+          <!-- All Sessions -->
           <button
-            class="w-full rounded-xl border border-transparent bg-slate-50 px-4 py-3 text-left text-sm hover:border-accent dark:bg-slate-900/60"
-            :class="!selectedProject ? 'border-accent bg-blue-50/60 dark:bg-slate-800/60' : ''"
+            class="mb-1 flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left text-sm transition-colors"
+            :class="!selectedProject
+              ? 'bg-terminal-500/10 text-terminal-600 dark:text-terminal-400'
+              : 'text-surface-600 hover:bg-surface-100 dark:text-surface-300 dark:hover:bg-surface-800'"
             @click="selectProject('')"
           >
-            All sessions ({{ totalProjectsCount }})
+            <span class="font-medium">All sessions</span>
+            <span class="font-mono text-xs text-surface-400">{{ totalProjectsCount }}</span>
           </button>
-          <button
-            v-for="project in filteredProjects"
-            :key="project.path"
-            class="w-full rounded-xl border border-transparent bg-slate-50 px-4 py-3 text-left text-sm hover:border-accent dark:bg-slate-900/60"
-            :class="selectedProject === project.path ? 'border-accent bg-blue-50/60 dark:bg-slate-800/60' : ''"
-            @click="selectProject(project.path)"
-          >
-            {{ project.path }} ({{ project.count }})
-          </button>
+
+          <!-- Project Search -->
+          <div class="relative mb-2">
+            <input
+              v-model="projectSearch"
+              type="text"
+              placeholder="Filter projects..."
+              class="w-full rounded-md border-0 bg-surface-100 py-1.5 px-2.5 text-xs text-surface-700 placeholder:text-surface-400 focus:outline-none focus:ring-1 focus:ring-terminal-400/50 dark:bg-surface-800 dark:text-surface-200"
+            />
+          </div>
+
+          <!-- Project List -->
+          <div class="space-y-0.5">
+            <button
+              v-for="project in filteredProjects"
+              :key="project.path"
+              class="flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left text-sm transition-colors"
+              :class="selectedProject === project.path
+                ? 'bg-terminal-500/10 text-terminal-600 dark:text-terminal-400'
+                : 'text-surface-600 hover:bg-surface-100 dark:text-surface-300 dark:hover:bg-surface-800'"
+              @click="selectProject(project.path)"
+            >
+              <span class="truncate font-mono text-xs" :title="project.path">{{ shortenPath(project.path) }}</span>
+              <span class="ml-2 shrink-0 font-mono text-2xs text-surface-400">{{ project.count }}</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      <div v-else class="space-y-4">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-3">
-            <button class="rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-300" @click="showProjects">
-              Back
-            </button>
-            <div>
-              <h2 class="text-lg font-semibold">Session List</h2>
-              <p class="text-xs text-slate-500 dark:text-slate-400">{{ selectedProject || 'All sessions' }}</p>
-            </div>
+      <!-- Sessions View -->
+      <div v-else class="flex flex-1 flex-col overflow-hidden">
+        <div class="flex items-center gap-2 border-b border-surface-100 px-3 py-2 dark:border-surface-800">
+          <button
+            class="flex h-6 w-6 items-center justify-center rounded text-surface-400 transition-colors hover:bg-surface-100 hover:text-surface-600 dark:hover:bg-surface-800 dark:hover:text-surface-200"
+            @click="showProjects"
+          >
+            <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path d="m15 18-6-6 6-6"/>
+            </svg>
+          </button>
+          <div class="flex-1 min-w-0">
+            <span class="text-2xs font-medium uppercase tracking-wider text-surface-400">Sessions</span>
+            <p class="truncate font-mono text-2xs text-surface-500" :title="selectedProject">{{ selectedProject || 'All' }}</p>
           </div>
-          <div class="flex items-center gap-2">
-            <button
-              class="rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-300"
-              :disabled="!selectedProject || activeSource === 'copilot'"
-              @click="startNewSession"
-            >
-              New Session
-            </button>
-            <button
-              class="rounded-full border border-slate-200 px-3 py-1.5 text-xs text-rose-500 dark:border-slate-700 dark:text-rose-400"
-              :disabled="!activeSession"
-              @click="archiveSession"
-            >
-              Archive
-            </button>
-            <span class="text-xs text-slate-500 dark:text-slate-400">{{ filteredSessions.length }} sessions</span>
-          </div>
+          <span class="font-mono text-2xs text-surface-400">{{ filteredSessions.length }}</span>
         </div>
 
-        <div class="max-h-[520px] space-y-3 overflow-auto pr-2">
+        <!-- Session Actions -->
+        <div class="flex items-center gap-1.5 border-b border-surface-100 px-3 py-2 dark:border-surface-800">
           <button
-            v-for="session in filteredSessions"
-            :key="session.relPath"
-            class="w-full rounded-2xl border border-transparent bg-slate-50 px-4 py-3 text-left hover:border-accent dark:bg-slate-900/60"
-            :class="activeSession?.relPath === session.relPath ? 'border-accent bg-blue-50/60 dark:bg-slate-800/60' : ''"
-            @click="selectSession(session)"
+            class="rounded-md bg-terminal-500 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-terminal-600 disabled:opacity-40"
+            :disabled="!selectedProject || activeSource === 'copilot'"
+            @click="startNewSession"
           >
-            <div class="font-semibold">{{ session.name || session.fileName }}</div>
-            <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              <div>{{ formatTimestamp(session.timestamp) }}</div>
-              <div>{{ session.project || session.cwd || 'Unknown project' }}</div>
-              <div v-if="typeof session.messageCount === 'number'">{{ session.messageCount }} msgs</div>
-            </div>
+            + New
           </button>
-          <div v-if="filteredSessions.length === 0" class="rounded-xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-            No sessions match your filters.
+          <button
+            class="rounded-md border border-surface-200 px-2.5 py-1 text-xs font-medium text-surface-600 transition-colors hover:bg-surface-100 disabled:opacity-40 dark:border-surface-700 dark:text-surface-300 dark:hover:bg-surface-800"
+            :disabled="!activeSession"
+            @click="archiveSession"
+          >
+            Archive
+          </button>
+        </div>
+
+        <!-- Session List -->
+        <div class="flex-1 overflow-y-auto scrollbar-thin p-2">
+          <div class="space-y-1">
+            <button
+              v-for="session in filteredSessions"
+              :key="session.relPath"
+              class="w-full rounded-md p-2.5 text-left transition-colors"
+              :class="activeSession?.relPath === session.relPath
+                ? 'bg-terminal-500/10 ring-1 ring-terminal-500/30'
+                : 'hover:bg-surface-100 dark:hover:bg-surface-800'"
+              @click="selectSession(session)"
+            >
+              <div class="flex items-start justify-between gap-2">
+                <span class="text-sm font-medium text-surface-800 dark:text-surface-100">{{ session.name || session.fileName }}</span>
+                <span v-if="session.messageCount" class="shrink-0 font-mono text-2xs text-surface-400">{{ session.messageCount }} msgs</span>
+              </div>
+              <div class="mt-1 flex items-center gap-2 text-2xs text-surface-400">
+                <span class="font-mono">{{ formatTimestamp(session.timestamp) }}</span>
+              </div>
+              <p class="mt-0.5 truncate font-mono text-2xs text-surface-400" :title="session.project || session.cwd">
+                {{ shortenPath(session.project || session.cwd || '') }}
+              </p>
+            </button>
+          </div>
+
+          <div v-if="filteredSessions.length === 0" class="flex flex-col items-center justify-center py-12 text-center">
+            <svg class="h-8 w-8 text-surface-300 dark:text-surface-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            <p class="mt-2 text-xs text-surface-400">No sessions found</p>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="rounded-2xl border border-slate-200 bg-white/80 p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900/80">
-      <div class="flex flex-wrap items-center justify-between gap-4">
-        <h2 class="text-lg font-semibold">Details</h2>
-        <div class="flex items-center gap-2">
-          <div class="flex rounded-full border border-slate-200 bg-white/70 p-1 dark:border-slate-700 dark:bg-slate-900/70">
-            <button
-              class="rounded-full px-3 py-1 text-xs"
-              :class="activeTab === 'messages' ? 'bg-white text-slate-900 shadow dark:bg-slate-800 dark:text-slate-100' : 'text-slate-500 dark:text-slate-400'"
-              @click="activeTab = 'messages'"
-            >
-              Messages
-            </button>
-            <button
-              class="rounded-full px-3 py-1 text-xs"
-              :class="activeTab === 'raw' ? 'bg-white text-slate-900 shadow dark:bg-slate-800 dark:text-slate-100' : 'text-slate-500 dark:text-slate-400'"
-              @click="activeTab = 'raw'"
-            >
-              Raw JSONL
-            </button>
-          </div>
-          <button
-            class="rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-300"
-            :disabled="activeSource !== 'codex' || !activeSession?.id"
-            @click="rejoinSession"
-          >
-            Rejoin
-          </button>
-          <button
-            class="rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-300"
-            :disabled="activeSource !== 'codex' || !activeSession?.id"
-            @click="focusSession"
-          >
-            Focus
-          </button>
-        </div>
+    <!-- Right Panel: Session Details -->
+    <section class="flex flex-1 flex-col bg-surface-50 dark:bg-surface-900">
+      <!-- Empty State -->
+      <div v-if="!activeSession" class="flex flex-1 flex-col items-center justify-center text-surface-400">
+        <svg class="h-12 w-12 text-surface-200 dark:text-surface-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
+        <p class="mt-3 text-sm">Select a session to view details</p>
       </div>
 
-      <div class="mt-4">
-        <div v-if="!activeSession" class="text-sm text-slate-500 dark:text-slate-400">Select a session to view its content.</div>
-        <div v-else>
-          <div class="grid gap-3 md:grid-cols-2">
-            <div class="rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/70">
-              <p class="text-xs uppercase text-slate-500 dark:text-slate-400">File</p>
-              <p class="text-sm">{{ activeSession.relPath }}</p>
-            </div>
-            <div class="rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/70">
-              <p class="text-xs uppercase text-slate-500 dark:text-slate-400">Project</p>
-              <p class="text-sm">{{ activeSession.project || activeSession.cwd || 'Unknown' }}</p>
-            </div>
-            <div class="rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/70">
-              <p class="text-xs uppercase text-slate-500 dark:text-slate-400">Timestamp</p>
-              <p class="text-sm">{{ formatTimestamp(activeSession.timestamp) }}</p>
-            </div>
-            <div class="rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/70">
-              <p class="text-xs uppercase text-slate-500 dark:text-slate-400">Session ID</p>
-              <p class="text-sm">{{ activeSession.id || 'Unknown' }}</p>
-            </div>
+      <!-- Session Content -->
+      <template v-else>
+        <!-- Header -->
+        <div class="flex items-center justify-between border-b border-surface-200 px-4 py-3 dark:border-surface-800">
+          <div class="min-w-0 flex-1">
+            <h2 class="truncate text-base font-semibold text-surface-900 dark:text-surface-100">
+              {{ activeSession.name || activeSession.fileName }}
+            </h2>
+            <p class="mt-0.5 font-mono text-xs text-surface-400">{{ activeSession.id || 'No ID' }}</p>
           </div>
 
-          <div class="mt-4">
-            <div v-if="activeTab === 'raw'" class="rounded-xl bg-slate-900/90 p-4 text-xs text-slate-100">
-              <pre>{{ activeSessionDetail?.content }}</pre>
-            </div>
-            <div v-else class="space-y-4">
-              <article
-                v-for="(message, idx) in activeSessionDetail?.messages || []"
-                :key="idx"
-                class="rounded-xl border border-slate-100 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
+          <div class="flex items-center gap-2">
+            <!-- Tab Switcher -->
+            <div class="flex rounded-md border border-surface-200 p-0.5 dark:border-surface-700">
+              <button
+                class="rounded px-2.5 py-1 text-xs font-medium transition-colors"
+                :class="activeTab === 'messages'
+                  ? 'bg-surface-100 text-surface-800 dark:bg-surface-700 dark:text-surface-100'
+                  : 'text-surface-500 hover:text-surface-700 dark:text-surface-400 dark:hover:text-surface-200'"
+                @click="activeTab = 'messages'"
               >
-                <header class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                  <span class="uppercase tracking-wide">{{ message.role }}</span>
-                  <span>{{ formatTimestamp(message.timestamp) }}</span>
-                </header>
-                <pre class="mt-2 text-sm text-slate-700 whitespace-pre-wrap dark:text-slate-200">{{ message.text }}</pre>
-              </article>
+                Messages
+              </button>
+              <button
+                class="rounded px-2.5 py-1 text-xs font-medium transition-colors"
+                :class="activeTab === 'raw'
+                  ? 'bg-surface-100 text-surface-800 dark:bg-surface-700 dark:text-surface-100'
+                  : 'text-surface-500 hover:text-surface-700 dark:text-surface-400 dark:hover:text-surface-200'"
+                @click="activeTab = 'raw'"
+              >
+                Raw
+              </button>
             </div>
+
+            <!-- Session Actions -->
+            <button
+              class="rounded-md border border-surface-200 px-2.5 py-1 text-xs font-medium text-surface-600 transition-colors hover:bg-surface-100 disabled:opacity-40 dark:border-surface-700 dark:text-surface-300 dark:hover:bg-surface-800"
+              :disabled="activeSource !== 'codex' || !activeSession?.id"
+              @click="rejoinSession"
+            >
+              Rejoin
+            </button>
+            <button
+              class="rounded-md border border-surface-200 px-2.5 py-1 text-xs font-medium text-surface-600 transition-colors hover:bg-surface-100 disabled:opacity-40 dark:border-surface-700 dark:text-surface-300 dark:hover:bg-surface-800"
+              :disabled="activeSource !== 'codex' || !activeSession?.id"
+              @click="focusSession"
+            >
+              Focus
+            </button>
           </div>
         </div>
-      </div>
 
-      <div class="mt-4 flex items-end gap-3">
-        <label class="flex flex-1 flex-col text-sm text-slate-500 dark:text-slate-400">
-          <span>Session name</span>
+        <!-- Metadata Grid -->
+        <div class="grid grid-cols-4 gap-px border-b border-surface-200 bg-surface-200 dark:border-surface-800 dark:bg-surface-800">
+          <div class="bg-surface-50 px-3 py-2 dark:bg-surface-900">
+            <p class="text-2xs font-medium uppercase tracking-wider text-surface-400">File</p>
+            <p class="mt-0.5 truncate font-mono text-xs text-surface-700 dark:text-surface-200" :title="activeSession.relPath">{{ activeSession.fileName }}</p>
+          </div>
+          <div class="bg-surface-50 px-3 py-2 dark:bg-surface-900">
+            <p class="text-2xs font-medium uppercase tracking-wider text-surface-400">Project</p>
+            <p class="mt-0.5 truncate font-mono text-xs text-surface-700 dark:text-surface-200" :title="activeSession.project || activeSession.cwd">{{ shortenPath(activeSession.project || activeSession.cwd || 'Unknown') }}</p>
+          </div>
+          <div class="bg-surface-50 px-3 py-2 dark:bg-surface-900">
+            <p class="text-2xs font-medium uppercase tracking-wider text-surface-400">Timestamp</p>
+            <p class="mt-0.5 font-mono text-xs text-surface-700 dark:text-surface-200">{{ formatTimestamp(activeSession.timestamp) }}</p>
+          </div>
+          <div class="bg-surface-50 px-3 py-2 dark:bg-surface-900">
+            <p class="text-2xs font-medium uppercase tracking-wider text-surface-400">Messages</p>
+            <p class="mt-0.5 font-mono text-xs text-surface-700 dark:text-surface-200">{{ activeSessionDetail?.messages?.length || 0 }}</p>
+          </div>
+        </div>
+
+        <!-- Content Area -->
+        <div class="flex-1 overflow-y-auto scrollbar-thin">
+          <!-- Raw JSONL -->
+          <div v-if="activeTab === 'raw'" class="p-4">
+            <pre class="overflow-x-auto rounded-lg bg-surface-900 p-4 font-mono text-xs leading-relaxed text-surface-100">{{ activeSessionDetail?.content }}</pre>
+          </div>
+
+          <!-- Messages -->
+          <div v-else class="divide-y divide-surface-100 dark:divide-surface-800">
+            <article
+              v-for="(message, idx) in activeSessionDetail?.messages || []"
+              :key="idx"
+              class="px-4 py-3"
+            >
+              <header class="flex items-center gap-2">
+                <span
+                  class="rounded px-1.5 py-0.5 font-mono text-2xs font-medium uppercase"
+                  :class="message.role === 'user'
+                    ? 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400'
+                    : 'bg-terminal-500/10 text-terminal-600 dark:text-terminal-400'"
+                >
+                  {{ message.role }}
+                </span>
+                <span class="font-mono text-2xs text-surface-400">{{ formatTimestamp(message.timestamp) }}</span>
+              </header>
+              <div class="mt-2 whitespace-pre-wrap font-mono text-sm leading-relaxed text-surface-700 dark:text-surface-200">{{ message.text }}</div>
+            </article>
+          </div>
+        </div>
+
+        <!-- Session Name Input -->
+        <div class="flex items-center gap-2 border-t border-surface-200 px-4 py-3 dark:border-surface-800">
           <input
             v-model="sessionName"
             type="text"
-            placeholder="Add a label"
-            class="mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+            placeholder="Add a label to this session..."
+            class="flex-1 rounded-md border border-surface-200 bg-white px-3 py-1.5 text-sm text-surface-900 placeholder:text-surface-400 focus:border-terminal-400 focus:outline-none dark:border-surface-700 dark:bg-surface-800 dark:text-surface-100"
           />
-        </label>
-        <button class="rounded-full border border-slate-200 px-4 py-2 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-300" :disabled="!activeSession" @click="saveSessionName">
-          Save name
-        </button>
-      </div>
+          <button
+            class="rounded-md bg-terminal-500 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-terminal-600 disabled:opacity-40"
+            :disabled="!activeSession"
+            @click="saveSessionName"
+          >
+            Save
+          </button>
+        </div>
+      </template>
     </section>
   </main>
 </template>
@@ -263,10 +342,17 @@ function sessionEndpoint(source: string) {
 }
 
 function formatTimestamp(value?: string) {
-  if (!value) return 'Unknown time';
+  if (!value) return '—';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
+  return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function shortenPath(path: string) {
+  if (!path) return '';
+  const parts = path.split('/');
+  if (parts.length <= 3) return path;
+  return '.../' + parts.slice(-2).join('/');
 }
 
 function applyFilters() {

@@ -1,24 +1,108 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
   color-scheme: light;
+  --scrollbar-bg: transparent;
+  --scrollbar-thumb: rgba(155, 168, 180, 0.4);
+  --scrollbar-thumb-hover: rgba(155, 168, 180, 0.6);
 }
 
 html.dark {
   color-scheme: dark;
+  --scrollbar-thumb: rgba(74, 86, 99, 0.6);
+  --scrollbar-thumb-hover: rgba(74, 86, 99, 0.8);
 }
 
 body {
-  font-family: 'Space Grotesk', 'Futura', 'Trebuchet MS', sans-serif;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
+/* Refined scrollbar */
 ::-webkit-scrollbar {
-  width: 10px;
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-bg);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(37, 99, 235, 0.3);
-  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Selection styling */
+::selection {
+  background: rgba(34, 197, 94, 0.25);
+}
+
+html.dark ::selection {
+  background: rgba(34, 197, 94, 0.35);
+}
+
+/* Custom utilities */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-bg);
+  }
+}
+
+/* Focus styles */
+@layer base {
+  *:focus-visible {
+    @apply outline-none ring-2 ring-terminal-400/50 ring-offset-2 ring-offset-surface-50 dark:ring-offset-surface-900;
+  }
+
+  button:focus-visible,
+  a:focus-visible {
+    @apply ring-offset-0;
+  }
+}
+
+/* Code/pre styling */
+pre, code {
+  font-family: 'IBM Plex Mono', Menlo, monospace;
+}
+
+/* Subtle grid pattern for backgrounds */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(155, 168, 180, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(155, 168, 180, 0.03) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+html.dark .bg-grid {
+  background-image:
+    linear-gradient(rgba(74, 86, 99, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(74, 86, 99, 0.08) 1px, transparent 1px);
+}
+
+/* Gradient text */
+.text-gradient {
+  background: linear-gradient(135deg, #4ade80 0%, #22c55e 50%, #16a34a 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Smooth transitions for theme switching */
+html {
+  transition: background-color 0.2s ease, color 0.2s ease;
 }

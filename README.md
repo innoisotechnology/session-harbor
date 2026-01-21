@@ -1,41 +1,130 @@
 # Session Harbor
 
-Session Harbor is a local dashboard for docking, scanning, and relaunching Codex and Claude sessions. It turns raw `.jsonl` logs into a searchable archive, lets you label sessions, and gives you quick jump controls for active work.
+A local dashboard for managing AI coding session logs. Dock, scan, and relaunch sessions from **Codex**, **Claude**, and **Copilot**.
 
-## Run
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Session Harbor                           Codex │ Claude │ Copilot  │
+├────────────────────┬────────────────────────────────────────────┤
+│  PROJECTS          │  DETAILS                                   │
+│  ───────────────── │  ────────────────────────────────────────  │
+│  > session-harbor  │  FILE        PROJECT      TIME     MSGS    │
+│    my-api          │  abc123.json .../harbor   Jan 21   142     │
+│    web-app         │                                            │
+│                    │  ┌─ Messages ─────────────────────────┐   │
+│  SESSIONS (12)     │  │ USER   08:42                       │   │
+│  ───────────────── │  │ Add dark mode toggle               │   │
+│  ■ implement-auth  │  │                                    │   │
+│    fix-routing     │  │ ASSISTANT   08:42                  │   │
+│    add-tests       │  │ I'll add a dark mode toggle...     │   │
+│                    │  └────────────────────────────────────┘   │
+└────────────────────┴────────────────────────────────────────────┘
+```
+
+## Quick Start
 
 ```sh
-cd /Users/innoiso/dev/random/session-harbor
 npm start
 ```
 
-Then open `http://localhost:3434`.
+Open [localhost:3434](http://localhost:3434)
 
-## What it does
+## Features
 
-- Browse Codex sessions from `~/.codex/sessions`.
-- Browse Claude sessions from `~/.claude/projects`.
-- View Codex `/status`-style account and rate-limit info (uses the same backend usage API).
-- Filter by project, search by path/id/name, and rename sessions.
-- Open Terminal tabs to rejoin or focus a running Codex session.
-- Start new Codex or Claude sessions from a project.
-- Optionally name a session before launching; the next matching session log will inherit it.
-- Archive sessions to move logs into an `Archive/` folder instead of deleting them.
+| Feature | Description |
+|---------|-------------|
+| **Multi-source** | Browse sessions from Codex, Claude, and Copilot |
+| **Search** | Filter by project, path, ID, or filename |
+| **Labels** | Name and organize sessions with custom labels |
+| **Archive** | Move old sessions to `Archive/` folder |
+| **Rejoin/Focus** | Jump back into active Codex sessions |
+| **Reports** | Generate analysis reports from session history |
+| **Feedback** | Track what went well and needs improvement |
 
-## Notes
+## Session Sources
 
-- The server reads session metadata from the first line of each `.jsonl` file.
-- Use the search box to filter by project (cwd), filename, session id, or path.
-- Use the toggle to switch between Codex (`~/.codex/sessions`) and Claude (`~/.claude/projects`) sessions.
-- Session names are stored locally in `session-harbor/data/session-names.json`.
-- Use the Projects list to filter sessions and start new Codex/Claude sessions in a project.
+| Source | Path | Status API |
+|--------|------|------------|
+| Codex | `~/.codex/sessions` | `/api/status` |
+| Claude | `~/.claude/projects` | `/api/claude/status` |
+| Copilot | `~/.copilot/session-state` | `/api/copilot/status` |
 
-## Session review CLI
-
-Generate a heuristic report from your session history (success/fail labels, tags, and critical turns).
+## CLI Commands
 
 ```sh
+# Start the server
+npm start
+
+# Generate session analysis report
 npm run review:sessions -- --source both --limit 100
+
+# Log feedback for a session
+npm run feedback:log
 ```
 
-Reports are written to `reports/session-review-<timestamp>/summary.md` and `sessions.json`.
+## API Endpoints
+
+### Sessions
+```
+GET  /api/sessions              # List Codex sessions
+GET  /api/claude/sessions       # List Claude sessions
+GET  /api/copilot/sessions      # List Copilot sessions
+GET  /api/session?file=<path>   # Get session detail
+GET  /api/projects?source=<src> # List projects
+GET  /api/search?query=<q>      # Search sessions
+```
+
+### Actions
+```
+POST /api/name                  # Save session label
+POST /api/archive-session       # Archive session
+POST /api/new-session           # Start new session
+GET  /api/resume?sessionId=<id> # Rejoin session
+GET  /api/focus?sessionId=<id>  # Focus session
+```
+
+### Reports & Feedback
+```
+GET  /api/reports               # List reports
+GET  /api/report?name=<name>    # Get report detail
+GET  /api/feedback-log          # Get feedback entries
+```
+
+## Data Storage
+
+```
+session-harbor/
+├── data/
+│   ├── session-names.json    # Custom session labels
+│   ├── pending-names.json    # Pending name assignments
+│   └── feedback.jsonl        # Feedback log
+└── reports/
+    └── session-review-*/     # Generated reports
+        ├── summary.md
+        ├── sessions.json
+        └── recommendations.json
+```
+
+## Tech Stack
+
+- **Frontend**: Vue 3, TypeScript, Tailwind CSS, Vite
+- **Backend**: Node.js HTTP server
+- **Data**: File-based (JSONL logs, JSON storage)
+
+## Development
+
+```sh
+# Install dependencies
+npm install
+cd frontend && npm install
+
+# Run in dev mode (hot reload)
+npm run dev
+
+# Build for production
+cd frontend && npm run build
+```
+
+---
+
+<sub>Session Harbor reads `.jsonl` session logs and provides a unified interface for managing your AI coding sessions.</sub>
