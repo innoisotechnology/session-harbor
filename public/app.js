@@ -26,6 +26,7 @@ const saveNameButton = document.getElementById('saveNameButton');
 const newSessionButton = document.getElementById('newSessionButton');
 const deleteSessionButton = document.getElementById('deleteSessionButton');
 const statusButton = document.getElementById('statusButton');
+const reportsButton = document.getElementById('reportsButton');
 const nameEditor = document.getElementById('nameEditor');
 
 let activeTab = 'messages';
@@ -438,6 +439,14 @@ statusButton.addEventListener('click', async () => {
     sessionDetail.innerHTML = '<p class="muted">Unable to load status.</p>';
   }
 });
+reportsButton.addEventListener('click', () => {
+  detailMode = 'reports';
+  nameEditor.classList.add('is-hidden');
+  sessionDetail.innerHTML = '<p class="muted">Loading reports...</p>';
+  renderReports().catch(() => {
+    sessionDetail.innerHTML = '<p class="muted">Unable to load reports.</p>';
+  });
+});
 deleteSessionButton.addEventListener('click', async () => {
   if (!state.active) return;
   const label = state.active.name || state.active.fileName || 'this session';
@@ -646,5 +655,101 @@ function renderLimitRow(label, leftPercent, resetsAt) {
       <span>${clamped.toFixed(0)}% left ${resetsAt ? `(resets ${resetsAt})` : ''}</span>
       <div class="limit-bar"><span style="width:${clamped}%;"></span></div>
     </div>
+  `;
+}
+
+async function renderReports() {
+  const response = await fetch('/api/reports');
+  const data = await response.json();
+  const reports = Array.isArray(data.reports) ? data.reports : [];
+  if (!reports.length) {
+    sessionDetail.innerHTML = '<p class="muted">No reports found.</p>';
+    return;
+  }
+
+  const list = reports
+    .map((report) => {
+      const label = report.createdAt ? formatTimestamp(report.createdAt) : report.name;
+      const status = report.hasSummary ? 'Summary available' : 'No summary';
+      return `
+        <button class="report-item" data-name="${report.name}">
+          <div class="report-title">${report.name}</div>
+          <div class="report-meta">
+            <span>${label}</span>
+            <span>${status}</span>
+          </div>
+        </button>
+      `;
+    })
+    .join('');
+
+  sessionDetail.innerHTML = `
+    <div class="report-panel">
+      <div class="report-list">${list}</div>
+      <div class="report-view">
+        <p class="muted">Select a report to view the summary.</p>
+      </div>
+    </div>
+  `;
+
+  const panel = sessionDetail.querySelector('.report-panel');
+  panel.addEventListener('click', async (event) => {
+    const button = event.target.closest('.report-item');
+    if (!button) return;
+    const name = button.dataset.name;
+    panel.querySelectorAll('.report-item').forEach((item) => {
+      item.classList.toggle('active', item === button);
+    });
+    const view = panel.querySelector('.report-view');
+    view.innerHTML = '<p class="muted">Loading summary...</p>';
+    try {
+      const res = await fetch(`/api/report?name=${encodeURIComponent(name)}`);
+      const payload = await res.json();
+      if (!payload.summary) {
+        view.innerHTML = '<p class="muted">Summary not available.</p>';
+        return;
+      }
+      const summaryHtml = `<pre class="raw-content">${escapeHtml(payload.summary)}</pre>`;
+      const recommendationsHtml = renderRecommendations(payload.recommendations);
+      view.innerHTML = `${summaryHtml}${recommendationsHtml}`;
+    } catch (err) {
+      view.innerHTML = '<p class="muted">Unable to load summary.</p>';
+    }
+  });
+}
+
+function renderRecommendations(recommendations) {
+  if (!recommendations || !Array.isArray(recommendations.observations)) {
+    return '';
+  }
+  const tags = recommendations.tagsSummary || {};
+  const tagRows = Object.keys(tags)
+    .sort((a, b) => tags[b] - tags[a])
+    .map((tag) => `<span class="tag">${escapeHtml(tag)} (${tags[tag]})</span>`)
+    .join('');
+
+  const items = recommendations.observations
+    .map((obs) => {
+      const tagsList = (obs.tags || []).map((tag) => `<span class="chip">${escapeHtml(tag)}</span>`).join('');
+      return `
+        <article class="observation-card">
+          <div class="observation-title">${escapeHtml(obs.title || '')}</div>
+          <div class="observation-meta">
+            <span>${escapeHtml(obs.session || '')}</span>
+            ${tagsList}
+          </div>
+          <p>${escapeHtml(obs.rationale || '')}</p>
+          <pre class="observation-snippet">${escapeHtml(obs.snippet || '')}</pre>
+        </article>
+      `;
+    })
+    .join('');
+
+  return `
+    <section class="report-section">
+      <h3>Observations</h3>
+      ${tagRows ? `<div class="tag-list">${tagRows}</div>` : ''}
+      <div class="observation-list">${items}</div>
+    </section>
   `;
 }

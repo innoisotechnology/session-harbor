@@ -10,11 +10,13 @@ const https = require('https');
 const PORT = process.env.PORT || 3434;
 const HOST = process.env.HOST || '127.0.0.1';
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const FRONTEND_DIR = path.join(__dirname, 'frontend', 'dist');
 const SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
 const CLAUDE_DIR = path.join(os.homedir(), '.claude', 'projects');
 const SESSION_EXT = '.jsonl';
 const NAMES_FILE = path.join(__dirname, 'data', 'session-names.json');
 const PENDING_FILE = path.join(__dirname, 'data', 'pending-names.json');
+const REPORTS_DIR = path.join(__dirname, 'reports');
 const CODEX_HOME = path.join(os.homedir(), '.codex');
 const CONFIG_FILE = path.join(CODEX_HOME, 'config.toml');
 const AUTH_FILE = path.join(CODEX_HOME, 'auth.json');
@@ -832,6 +834,82 @@ function focusTerminalTabByTitle(titleNeedle) {
   });
 }
 
+async function listReports() {
+  let entries = [];
+  try {
+    entries = await fs.promises.readdir(REPORTS_DIR, { withFileTypes: true });
+  } catch (err) {
+    return [];
+  }
+  const reports = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const fullPath = path.join(REPORTS_DIR, entry.name);
+    let stat;
+    try {
+      stat = await fs.promises.stat(fullPath);
+    } catch (err) {
+      continue;
+    }
+    const summaryPath = path.join(fullPath, 'summary.md');
+    let hasSummary = false;
+    try {
+      await fs.promises.access(summaryPath, fs.constants.R_OK);
+      hasSummary = true;
+    } catch (err) {
+      hasSummary = false;
+    }
+    reports.push({
+      name: entry.name,
+      createdAt: stat.mtime ? new Date(stat.mtime).toISOString() : null,
+      hasSummary,
+    });
+  }
+  reports.sort((a, b) => {
+    const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
+    const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
+    return bTime - aTime;
+  });
+  return reports;
+}
+
+async function readReportSummary(reportName) {
+  const safeName = reportName.replace(/[^a-zA-Z0-9._-]/g, '');
+  if (!safeName) return null;
+  const fullPath = path.join(REPORTS_DIR, safeName);
+  const summaryPath = path.join(fullPath, 'summary.md');
+  try {
+    const content = await fs.promises.readFile(summaryPath, 'utf8');
+    return content;
+  } catch (err) {
+    return null;
+  }
+}
+
+async function readReportRecommendations(reportName) {
+  const safeName = reportName.replace(/[^a-zA-Z0-9._-]/g, '');
+  if (!safeName) return null;
+  const fullPath = path.join(REPORTS_DIR, safeName);
+  const recommendationsPath = path.join(fullPath, 'recommendations.json');
+  try {
+    const raw = await fs.promises.readFile(recommendationsPath, 'utf8');
+    return JSON.parse(raw);
+  } catch (err) {
+    return null;
+  }
+}
+
+function resolveStaticDir() {
+  try {
+    if (fs.existsSync(FRONTEND_DIR)) {
+      return FRONTEND_DIR;
+    }
+  } catch (err) {
+    // ignore and fall back to public
+  }
+  return PUBLIC_DIR;
+}
+
 const server = http.createServer(async (req, res) => {
   const parsedUrl = url.parse(req.url, true);
   const pathname = parsedUrl.pathname || '/';
@@ -883,6 +961,28 @@ const server = http.createServer(async (req, res) => {
         return a.path.localeCompare(b.path);
       });
     sendJson(res, 200, { projects });
+    return;
+  }
+
+  if (pathname === '/api/reports') {
+    const reports = await listReports();
+    sendJson(res, 200, { reports });
+    return;
+  }
+
+  if (pathname === '/api/report') {
+    const name = (parsedUrl.query.name || '').toString();
+    if (!name) {
+      sendJson(res, 400, { error: 'name is required.' });
+      return;
+    }
+    const summary = await readReportSummary(name);
+    if (!summary) {
+      sendJson(res, 404, { error: 'Report not found.' });
+      return;
+    }
+    const recommendations = await readReportRecommendations(name);
+    sendJson(res, 200, { name, summary, recommendations });
     return;
   }
 
@@ -1196,15 +1296,17 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  let filePath = pathname === '/' ? path.join(PUBLIC_DIR, 'index.html') : path.join(PUBLIC_DIR, pathname);
-  if (!filePath.startsWith(PUBLIC_DIR)) {
+  const staticDir = resolveStaticDir();
+  let filePath = pathname === '/' ? path.join(staticDir, 'index.html') : path.join(staticDir, pathname);
+  if (!filePath.startsWith(staticDir)) {
     sendText(res, 403, 'Forbidden');
     return;
   }
 
   fs.stat(filePath, (err, stat) => {
     if (err) {
-      sendText(res, 404, 'Not found');
+      const fallback = path.join(staticDir, 'index.html');
+      sendFile(res, fallback);
       return;
     }
     if (stat.isDirectory()) {

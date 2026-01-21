@@ -29,3 +29,13 @@ Then open `http://localhost:3434`.
 - Use the toggle to switch between Codex (`~/.codex/sessions`) and Claude (`~/.claude/projects`) sessions.
 - Session names are stored locally in `session-harbor/data/session-names.json`.
 - Use the Projects list to filter sessions and start new Codex/Claude sessions in a project.
+
+## Session review CLI
+
+Generate a heuristic report from your session history (success/fail labels, tags, and critical turns).
+
+```sh
+npm run review:sessions -- --source both --limit 100
+```
+
+Reports are written to `reports/session-review-<timestamp>/summary.md` and `sessions.json`.
