@@ -12,8 +12,16 @@
             v-model="searchTerm"
             type="text"
             placeholder="Search sessions..."
+            :aria-busy="isSearching ? 'true' : 'false'"
             class="w-full rounded-md border border-surface-200 bg-white py-1.5 pl-8 pr-3 text-sm text-surface-900 placeholder:text-surface-400 focus:border-terminal-400 focus:outline-none dark:border-surface-700 dark:bg-surface-800 dark:text-surface-100"
           />
+        </div>
+        <div v-if="isSearching" class="flex items-center gap-1 text-2xs text-surface-400">
+          <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="9" class="opacity-25"/>
+            <path d="M21 12a9 9 0 0 0-9-9" class="opacity-75"/>
+          </svg>
+          <span>Searching...</span>
         </div>
         <button
           class="flex h-8 w-8 items-center justify-center rounded-md border border-surface-200 text-surface-500 transition-colors hover:bg-surface-100 hover:text-surface-700 dark:border-surface-700 dark:hover:bg-surface-800 dark:hover:text-surface-200"
@@ -235,13 +243,13 @@
           </div>
 
           <!-- Messages -->
-          <div v-else class="divide-y divide-surface-100 dark:divide-surface-800">
+          <div v-else class="space-y-3 p-4">
             <article
               v-for="(message, idx) in activeSessionDetail?.messages || []"
               :key="idx"
-              class="px-4 py-3"
+              class="flex max-h-80 flex-col overflow-hidden rounded-lg border border-surface-200 bg-white px-4 py-3 shadow-sm dark:border-surface-800 dark:bg-surface-900"
             >
-              <header class="flex items-center gap-2">
+              <header class="flex items-center gap-2 border-b border-surface-100 pb-2 dark:border-surface-800">
                 <span
                   class="rounded px-1.5 py-0.5 font-mono text-2xs font-medium uppercase"
                   :class="message.role === 'user'
@@ -252,7 +260,9 @@
                 </span>
                 <span class="font-mono text-2xs text-surface-400">{{ formatTimestamp(message.timestamp) }}</span>
               </header>
-              <div class="mt-2 whitespace-pre-wrap font-mono text-sm leading-relaxed text-surface-700 dark:text-surface-200">{{ message.text }}</div>
+              <div class="mt-2 min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap font-mono text-sm leading-relaxed text-surface-700 scrollbar-thin dark:text-surface-200">
+                {{ message.text }}
+              </div>
             </article>
           </div>
         </div>
@@ -326,6 +336,8 @@ const searchTerm = ref('');
 const projectSearch = ref('');
 const sessionName = ref('');
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
+let searchRequestId = 0;
+const isSearching = ref(false);
 
 const totalProjectsCount = computed(() => filteredProjects.value.reduce((sum, item) => sum + item.count, 0));
 
@@ -385,12 +397,21 @@ async function fetchProjects() {
 }
 
 async function searchSessions(query: string) {
+  const requestId = ++searchRequestId;
+  isSearching.value = true;
   const params = new URLSearchParams({ source: activeSource.value, query });
   if (selectedProject.value) params.set('project', selectedProject.value);
-  const response = await fetch(`/api/search?${params.toString()}`);
-  const data = await response.json();
-  sessions.value = data.sessions || [];
-  filteredSessions.value = sessions.value;
+  try {
+    const response = await fetch(`/api/search?${params.toString()}`);
+    const data = await response.json();
+    if (requestId !== searchRequestId) return;
+    sessions.value = data.sessions || [];
+    filteredSessions.value = sessions.value;
+  } finally {
+    if (requestId === searchRequestId) {
+      isSearching.value = false;
+    }
+  }
 }
 
 async function selectSession(session: Session) {
@@ -475,6 +496,7 @@ watch(searchTerm, (value) => {
   if (searchTimer) clearTimeout(searchTimer);
   const query = value.trim();
   if (!query) {
+    isSearching.value = false;
     fetchSessions();
     return;
   }
@@ -490,6 +512,7 @@ watch(activeSource, () => {
   selectedProject.value = '';
   searchTerm.value = '';
   projectSearch.value = '';
+  isSearching.value = false;
   fetchSessions();
   fetchProjects();
 });
