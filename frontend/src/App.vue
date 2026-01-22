@@ -6,10 +6,11 @@
         <!-- Logo & Title -->
         <div class="flex items-center gap-4">
           <div class="relative flex h-9 w-9 items-center justify-center">
-            <div class="absolute inset-0 rounded-lg bg-gradient-to-br from-terminal-400 to-terminal-600 opacity-20"></div>
-            <svg class="relative h-5 w-5 text-terminal-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M4 17l6-6-6-6M12 19h8" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
+            <img
+              src="./assets/app-icon.png"
+              alt="Session Harbor"
+              class="h-9 w-9 rounded-lg object-cover"
+            />
           </div>
           <div class="flex items-baseline gap-3">
             <h1 class="text-lg font-semibold tracking-tight">Session Harbor</h1>
