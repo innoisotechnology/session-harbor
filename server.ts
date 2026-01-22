@@ -17,6 +17,8 @@ const COPILOT_DIR = path.join(os.homedir(), '.copilot', 'session-state');
 const SESSION_EXT = '.jsonl';
 const NAMES_FILE = path.join(__dirname, 'data', 'session-names.json');
 const PENDING_FILE = path.join(__dirname, 'data', 'pending-names.json');
+const STATUS_FILE = path.join(__dirname, 'data', 'session-status.json');
+const META_FILE = path.join(__dirname, 'data', 'session-meta.json');
 const REPORTS_DIR = path.join(__dirname, 'reports');
 const FEEDBACK_FILE = path.join(__dirname, 'data', 'feedback.jsonl');
 const CODEX_HOME = path.join(os.homedir(), '.codex');
@@ -44,6 +46,9 @@ async function listSessionFiles(dir: string): Promise<string[]> {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
+      if (entry.name.toLowerCase() === 'archive') {
+        continue;
+      }
       files.push(...(await listSessionFiles(fullPath)));
     } else if (entry.isFile() && entry.name.endsWith(SESSION_EXT)) {
       files.push(fullPath);
@@ -225,8 +230,58 @@ async function savePendingNames(pending: any[]): Promise<void> {
   await fs.promises.writeFile(PENDING_FILE, JSON.stringify(pending, null, 2));
 }
 
+async function loadSessionStatuses(): Promise<Record<string, { status: string; updatedAt?: string }>> {
+  try {
+    const raw = await fs.promises.readFile(STATUS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (err) {
+    return {};
+  }
+}
+
+async function saveSessionStatuses(statuses: Record<string, { status: string; updatedAt?: string }>): Promise<void> {
+  await fs.promises.mkdir(path.dirname(STATUS_FILE), { recursive: true });
+  await fs.promises.writeFile(STATUS_FILE, JSON.stringify(statuses, null, 2));
+}
+
+async function loadSessionMeta(): Promise<Record<string, { tags?: string[]; notes?: string; updatedAt?: string }>> {
+  try {
+    const raw = await fs.promises.readFile(META_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (err) {
+    return {};
+  }
+}
+
+async function saveSessionMeta(meta: Record<string, { tags?: string[]; notes?: string; updatedAt?: string }>): Promise<void> {
+  await fs.promises.mkdir(path.dirname(META_FILE), { recursive: true });
+  await fs.promises.writeFile(META_FILE, JSON.stringify(meta, null, 2));
+}
+
 function buildNameKey(source, relPath) {
   return `${source}:${relPath}`;
+}
+
+function normalizeTags(input: unknown): string[] {
+  const raw = Array.isArray(input)
+    ? input
+    : typeof input === 'string'
+      ? input.split(',')
+      : [];
+  const seen = new Set<string>();
+  const tags = [];
+  raw.forEach((entry) => {
+    if (typeof entry !== 'string') return;
+    const trimmed = entry.trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    tags.push(trimmed);
+  });
+  return tags;
 }
 
 function normalizeMessageContent(content) {
@@ -443,6 +498,8 @@ async function loadSessions() {
   const files = await listSessionFiles(SESSIONS_DIR);
   const sessions = [];
   const names = await loadSessionNames();
+  const meta = await loadSessionMeta();
+  const statuses = await loadSessionStatuses();
   const pending = await loadPendingNames();
 
   for (const filePath of files) {
@@ -477,14 +534,21 @@ async function loadSessions() {
       return false;
     });
 
+    const relPath = toRelativeSessionPath(filePath);
+    const statusKey = buildNameKey('codex', relPath);
+    const statusEntry = statuses[statusKey];
+    const metaEntry = meta[statusKey] || {};
     sessions.push({
       id: parsed.payload.id || null,
       timestamp: parsed.payload.timestamp || parsed.timestamp || null,
       cwd: parsed.payload.cwd || null,
-      relPath: toRelativeSessionPath(filePath),
+      relPath,
       fileName: path.basename(filePath),
-      name: names[buildNameKey('codex', toRelativeSessionPath(filePath))] || '',
+      name: names[buildNameKey('codex', relPath)] || '',
       messageCount,
+      status: normalizeStatus(statusEntry?.status),
+      tags: Array.isArray(metaEntry.tags) ? metaEntry.tags : [],
+      notes: typeof metaEntry.notes === 'string' ? metaEntry.notes : '',
     });
   }
 
@@ -509,6 +573,8 @@ async function loadClaudeSessions() {
   const files = await listSessionFiles(CLAUDE_DIR);
   const sessions = [];
   const names = await loadSessionNames();
+  const meta = await loadSessionMeta();
+  const statuses = await loadSessionStatuses();
   const pending = await loadPendingNames();
 
   for (const filePath of files) {
@@ -529,6 +595,9 @@ async function loadClaudeSessions() {
       return entry?.type === 'user' || entry?.type === 'assistant';
     });
 
+    const statusKey = buildNameKey('claude', relPath);
+    const statusEntry = statuses[statusKey];
+    const metaEntry = meta[statusKey] || {};
     sessions.push({
       id,
       timestamp: stat.mtime ? new Date(stat.mtime).toISOString() : null,
@@ -537,6 +606,9 @@ async function loadClaudeSessions() {
       fileName,
       name: names[buildNameKey('claude', relPath)] || '',
       messageCount,
+      status: normalizeStatus(statusEntry?.status),
+      tags: Array.isArray(metaEntry.tags) ? metaEntry.tags : [],
+      notes: typeof metaEntry.notes === 'string' ? metaEntry.notes : '',
     });
   }
 
@@ -567,10 +639,13 @@ async function loadCopilotSessions() {
 
   const sessions = [];
   const names = await loadSessionNames();
+  const meta = await loadSessionMeta();
+  const statuses = await loadSessionStatuses();
   const pending = await loadPendingNames();
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
+    if (entry.name.toLowerCase() === 'archive') continue;
     const sessionDir = path.join(COPILOT_DIR, entry.name);
     const eventsPath = path.join(sessionDir, 'events.jsonl');
     const workspacePath = path.join(sessionDir, 'workspace.yaml');
@@ -590,6 +665,9 @@ async function loadCopilotSessions() {
     });
 
     const relPath = path.relative(COPILOT_DIR, eventsPath);
+    const statusKey = buildNameKey('copilot', relPath);
+    const statusEntry = statuses[statusKey];
+    const metaEntry = meta[statusKey] || {};
     sessions.push({
       id: workspace.id || entry.name,
       timestamp,
@@ -599,6 +677,9 @@ async function loadCopilotSessions() {
       fileName: path.basename(eventsPath),
       name: names[buildNameKey('copilot', relPath)] || '',
       messageCount,
+      status: normalizeStatus(statusEntry?.status),
+      tags: Array.isArray(metaEntry.tags) ? metaEntry.tags : [],
+      notes: typeof metaEntry.notes === 'string' ? metaEntry.notes : '',
     });
   }
 
@@ -617,6 +698,10 @@ async function loadCopilotSessions() {
   cachedCopilotSessions = sessions;
   lastCopilotScanAt = Date.now();
   return sessions;
+}
+
+function filterArchived(sessions) {
+  return sessions.filter((session) => session.status !== 'archived');
 }
 
 async function getSessions() {
@@ -721,42 +806,10 @@ function isSafeCopilotPath(relPath) {
   return resolved.startsWith(base);
 }
 
-async function archiveSessionFile(source, relPath) {
-  const archiveDir = source === 'claude'
-    ? path.join(CLAUDE_DIR, 'Archive')
-    : source === 'copilot'
-      ? path.join(COPILOT_DIR, 'Archive')
-      : path.join(SESSIONS_DIR, 'Archive');
-
-  await fs.promises.mkdir(archiveDir, { recursive: true });
-
-  if (source === 'claude') {
-    if (!isSafeClaudePath(relPath)) {
-      throw new Error('Invalid path');
-    }
-    const fullPath = path.resolve(CLAUDE_DIR, relPath);
-    const destPath = path.join(archiveDir, path.basename(relPath));
-    await fs.promises.rename(fullPath, destPath);
-    return;
-  }
-
-  if (source === 'copilot') {
-    if (!isSafeCopilotPath(relPath)) {
-      throw new Error('Invalid path');
-    }
-    const fullPath = path.resolve(COPILOT_DIR, relPath);
-    const sessionDir = path.dirname(fullPath);
-    const destPath = path.join(archiveDir, path.basename(sessionDir));
-    await fs.promises.rename(sessionDir, destPath);
-    return;
-  }
-
-  if (!isSafeSessionPath(relPath)) {
-    throw new Error('Invalid path');
-  }
-  const fullPath = path.resolve(SESSIONS_DIR, relPath);
-  const destPath = path.join(archiveDir, path.basename(relPath));
-  await fs.promises.rename(fullPath, destPath);
+function normalizeStatus(input: unknown): 'active' | 'complete' | 'archived' {
+  const value = typeof input === 'string' ? input.toLowerCase() : '';
+  if (value === 'complete' || value === 'archived') return value;
+  return 'active';
 }
 
 function getSessionProject(session, source) {
@@ -1105,7 +1158,7 @@ const server = http.createServer(async (req, res) => {
     const sessions = await getSessions();
     const filtered = search
       ? sessions.filter((session) => {
-          const haystack = [session.fileName, session.cwd, session.id, session.relPath]
+          const haystack = [session.fileName, session.cwd, session.id, session.relPath, session.name, session.tags?.join(' '), session.notes]
             .filter(Boolean)
             .join(' ')
             .toLowerCase();
@@ -1121,7 +1174,7 @@ const server = http.createServer(async (req, res) => {
     const sessions = await getClaudeSessions();
     const filtered = search
       ? sessions.filter((session) => {
-          const haystack = [session.fileName, session.project, session.id, session.relPath]
+          const haystack = [session.fileName, session.project, session.id, session.relPath, session.name, session.tags?.join(' '), session.notes]
             .filter(Boolean)
             .join(' ')
             .toLowerCase();
@@ -1137,7 +1190,7 @@ const server = http.createServer(async (req, res) => {
     const sessions = await getCopilotSessions();
     const filtered = search
       ? sessions.filter((session) => {
-          const haystack = [session.fileName, session.project, session.cwd, session.id, session.relPath]
+          const haystack = [session.fileName, session.project, session.cwd, session.id, session.relPath, session.name, session.tags?.join(' '), session.notes]
             .filter(Boolean)
             .join(' ')
             .toLowerCase();
@@ -1156,7 +1209,7 @@ const server = http.createServer(async (req, res) => {
         ? await getCopilotSessions()
         : await getSessions();
     const counts = new Map();
-    sessions.forEach((session) => {
+    filterArchived(sessions).forEach((session) => {
       const key = session.project || session.cwd || 'Unknown';
       counts.set(key, (counts.get(key) || 0) + 1);
     });
@@ -1230,7 +1283,7 @@ const server = http.createServer(async (req, res) => {
     const matcher = getSearchMatcher(source, queryLower);
     const results = [];
 
-    for (const session of filtered) {
+    for (const session of filterArchived(filtered)) {
       const fullPath = source === 'claude'
         ? path.resolve(CLAUDE_DIR, session.relPath)
         : source === 'copilot'
@@ -1421,22 +1474,122 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    try {
-      await archiveSessionFile(source, relPath);
-      if (source === 'codex') {
-        cachedSessions = [];
-        lastScanAt = 0;
-      } else if (source === 'claude') {
-        cachedClaudeSessions = [];
-        lastClaudeScanAt = 0;
-      } else if (source === 'copilot') {
-        cachedCopilotSessions = [];
-        lastCopilotScanAt = 0;
-      }
-      sendJson(res, 200, { ok: true });
-    } catch (err) {
-      sendJson(res, 500, { error: 'Failed to archive session.' });
+    const archive = payload.archive !== false;
+    const statuses = await loadSessionStatuses();
+    const key = buildNameKey(source, relPath);
+    if (archive) {
+      statuses[key] = { status: 'archived', updatedAt: new Date().toISOString() };
+    } else {
+      delete statuses[key];
     }
+    await saveSessionStatuses(statuses);
+
+    if (source === 'codex') {
+      cachedSessions = [];
+      lastScanAt = 0;
+    } else if (source === 'claude') {
+      cachedClaudeSessions = [];
+      lastClaudeScanAt = 0;
+    } else if (source === 'copilot') {
+      cachedCopilotSessions = [];
+      lastCopilotScanAt = 0;
+    }
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (pathname === '/api/complete-session') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { error: 'Method not allowed.' });
+      return;
+    }
+
+    let payload;
+    try {
+      payload = await readJsonBody(req);
+    } catch (err) {
+      sendJson(res, 400, { error: 'Invalid JSON.' });
+      return;
+    }
+
+    const source = (payload.source || '').toString();
+    const relPath = (payload.relPath || '').toString();
+    const complete = Boolean(payload.complete);
+
+    if (!source || !relPath) {
+      sendJson(res, 400, { error: 'source and relPath are required.' });
+      return;
+    }
+
+    const statuses = await loadSessionStatuses();
+    const key = buildNameKey(source, relPath);
+    if (complete) {
+      statuses[key] = { status: 'complete', updatedAt: new Date().toISOString() };
+    } else {
+      delete statuses[key];
+    }
+    await saveSessionStatuses(statuses);
+
+    if (source === 'codex') {
+      cachedSessions = [];
+      lastScanAt = 0;
+    } else if (source === 'claude') {
+      cachedClaudeSessions = [];
+      lastClaudeScanAt = 0;
+    } else if (source === 'copilot') {
+      cachedCopilotSessions = [];
+      lastCopilotScanAt = 0;
+    }
+
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (pathname === '/api/session-meta') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { error: 'Method not allowed.' });
+      return;
+    }
+
+    let payload;
+    try {
+      payload = await readJsonBody(req);
+    } catch (err) {
+      sendJson(res, 400, { error: 'Invalid JSON.' });
+      return;
+    }
+
+    const source = (payload.source || '').toString();
+    const relPath = (payload.relPath || '').toString();
+    const tags = normalizeTags(payload.tags);
+    const notes = typeof payload.notes === 'string' ? payload.notes.trim() : '';
+
+    if (!source || !relPath) {
+      sendJson(res, 400, { error: 'source and relPath are required.' });
+      return;
+    }
+
+    const meta = await loadSessionMeta();
+    const key = buildNameKey(source, relPath);
+    if (!tags.length && !notes) {
+      delete meta[key];
+    } else {
+      meta[key] = { tags, notes, updatedAt: new Date().toISOString() };
+    }
+    await saveSessionMeta(meta);
+
+    if (source === 'codex') {
+      cachedSessions = [];
+      lastScanAt = 0;
+    } else if (source === 'claude') {
+      cachedClaudeSessions = [];
+      lastClaudeScanAt = 0;
+    } else if (source === 'copilot') {
+      cachedCopilotSessions = [];
+      lastCopilotScanAt = 0;
+    }
+
+    sendJson(res, 200, { ok: true });
     return;
   }
 

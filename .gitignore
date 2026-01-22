@@ -11,5 +11,7 @@ node_modules
 dist/
 data/session-names.json
 data/pending-names.json
+data/session-status.json
+data/session-meta.json
 data/feedback.jsonl
 data/feedback-drafts/

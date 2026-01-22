@@ -1,0 +1,7 @@
+FROM node:20-bullseye
+
+WORKDIR /usr/src/app
+
+RUN corepack enable
+
+CMD ["npm", "run", "dev"]
