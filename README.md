@@ -77,8 +77,12 @@ GET  /api/search?query=<q>      # Search sessions
 ### Actions
 ```
 POST /api/name                  # Save session label
+POST /api/name-by-id            # Save session label by sessionId
 POST /api/archive-session       # Archive session
+POST /api/archive-by-id         # Archive session by sessionId
 POST /api/new-session           # Start new session
+POST /api/complete-session      # Mark session complete
+POST /api/complete-by-id        # Mark session complete by sessionId
 GET  /api/resume?sessionId=<id> # Rejoin session
 GET  /api/focus?sessionId=<id>  # Focus session
 ```
@@ -124,6 +128,15 @@ npm run dev
 # Build for production
 cd frontend && npm run build
 ```
+
+## Desktop App (Electron)
+
+```sh
+# Build the frontend + backend and package a macOS app
+npm run build:desktop
+```
+
+The packaged app is written to `dist-electron/` (DMG + ZIP). On launch, the app runs the backend in-process and serves the bundled frontend.
 
 ---
 

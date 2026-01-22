@@ -9,18 +9,20 @@ import https from 'https';
 
 const PORT = Number(process.env.PORT) || 3434;
 const HOST = process.env.HOST || '127.0.0.1';
-const PUBLIC_DIR = path.join(__dirname, 'public');
-const FRONTEND_DIR = path.join(__dirname, 'frontend', 'dist');
+const APP_ROOT = resolveAppRoot();
+const PUBLIC_DIR = path.join(APP_ROOT, 'public');
+const FRONTEND_DIR = path.join(APP_ROOT, 'frontend', 'dist');
 const SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
 const CLAUDE_DIR = path.join(os.homedir(), '.claude', 'projects');
 const COPILOT_DIR = path.join(os.homedir(), '.copilot', 'session-state');
 const SESSION_EXT = '.jsonl';
-const NAMES_FILE = path.join(__dirname, 'data', 'session-names.json');
-const PENDING_FILE = path.join(__dirname, 'data', 'pending-names.json');
-const STATUS_FILE = path.join(__dirname, 'data', 'session-status.json');
-const META_FILE = path.join(__dirname, 'data', 'session-meta.json');
-const REPORTS_DIR = path.join(__dirname, 'reports');
-const FEEDBACK_FILE = path.join(__dirname, 'data', 'feedback.jsonl');
+const DATA_DIR = process.env.SESSION_HARBOR_DATA_DIR || path.join(APP_ROOT, 'data');
+const NAMES_FILE = path.join(DATA_DIR, 'session-names.json');
+const PENDING_FILE = path.join(DATA_DIR, 'pending-names.json');
+const STATUS_FILE = path.join(DATA_DIR, 'session-status.json');
+const META_FILE = path.join(DATA_DIR, 'session-meta.json');
+const REPORTS_DIR = process.env.SESSION_HARBOR_REPORTS_DIR || path.join(APP_ROOT, 'reports');
+const FEEDBACK_FILE = path.join(DATA_DIR, 'feedback.jsonl');
 const CODEX_HOME = path.join(os.homedir(), '.codex');
 const CONFIG_FILE = path.join(CODEX_HOME, 'config.toml');
 const AUTH_FILE = path.join(CODEX_HOME, 'auth.json');
@@ -33,6 +35,16 @@ let lastClaudeScanAt = 0;
 let cachedCopilotSessions: any[] = [];
 let lastCopilotScanAt = 0;
 const CACHE_TTL_MS = 10_000;
+
+function resolveAppRoot() {
+  if (process.env.SESSION_HARBOR_APP_ROOT) {
+    return process.env.SESSION_HARBOR_APP_ROOT;
+  }
+  if (fs.existsSync(path.join(__dirname, 'frontend'))) {
+    return __dirname;
+  }
+  return path.resolve(__dirname, '..');
+}
 
 async function listSessionFiles(dir: string): Promise<string[]> {
   let entries = [];
@@ -213,6 +225,54 @@ async function loadSessionNames(): Promise<Record<string, string>> {
 async function saveSessionNames(names: Record<string, string>): Promise<void> {
   await fs.promises.mkdir(path.dirname(NAMES_FILE), { recursive: true });
   await fs.promises.writeFile(NAMES_FILE, JSON.stringify(names, null, 2));
+}
+
+async function setSessionName(source: string, relPath: string, name: string): Promise<void> {
+  const names = await loadSessionNames();
+  const key = buildNameKey(source, relPath);
+  if (name) {
+    names[key] = name;
+  } else {
+    delete names[key];
+  }
+  await saveSessionNames(names);
+
+  if (source === 'codex') {
+    cachedSessions = [];
+    lastScanAt = 0;
+  } else if (source === 'claude') {
+    cachedClaudeSessions = [];
+    lastClaudeScanAt = 0;
+  } else if (source === 'copilot') {
+    cachedCopilotSessions = [];
+    lastCopilotScanAt = 0;
+  }
+}
+
+async function setSessionStatus(
+  source: string,
+  relPath: string,
+  status: 'archived' | 'complete' | null,
+): Promise<void> {
+  const statuses = await loadSessionStatuses();
+  const key = buildNameKey(source, relPath);
+  if (status) {
+    statuses[key] = { status, updatedAt: new Date().toISOString() };
+  } else {
+    delete statuses[key];
+  }
+  await saveSessionStatuses(statuses);
+
+  if (source === 'codex') {
+    cachedSessions = [];
+    lastScanAt = 0;
+  } else if (source === 'claude') {
+    cachedClaudeSessions = [];
+    lastClaudeScanAt = 0;
+  } else if (source === 'copilot') {
+    cachedCopilotSessions = [];
+    lastCopilotScanAt = 0;
+  }
 }
 
 async function loadPendingNames(): Promise<any[]> {
@@ -1427,28 +1487,49 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 400, { error: 'source and relPath are required.' });
       return;
     }
-
-    const names = await loadSessionNames();
-    const key = buildNameKey(source, relPath);
-    if (name) {
-      names[key] = name;
-    } else {
-      delete names[key];
-    }
-    await saveSessionNames(names);
-
-    if (source === 'codex') {
-      cachedSessions = [];
-      lastScanAt = 0;
-    } else if (source === 'claude') {
-      cachedClaudeSessions = [];
-      lastClaudeScanAt = 0;
-    } else if (source === 'copilot') {
-      cachedCopilotSessions = [];
-      lastCopilotScanAt = 0;
-    }
+    await setSessionName(source, relPath, name);
 
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (pathname === '/api/name-by-id') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { error: 'Method not allowed.' });
+      return;
+    }
+
+    let payload;
+    try {
+      payload = await readJsonBody(req);
+    } catch (err) {
+      sendJson(res, 400, { error: 'Invalid JSON.' });
+      return;
+    }
+
+    const source = (payload.source || '').toString();
+    const sessionId = (payload.sessionId || '').toString().trim();
+    const name = (payload.name || '').toString().trim();
+
+    if (!source || !sessionId) {
+      sendJson(res, 400, { error: 'source and sessionId are required.' });
+      return;
+    }
+
+    const sessions = source === 'claude'
+      ? await getClaudeSessions()
+      : source === 'copilot'
+        ? await getCopilotSessions()
+        : await getSessions();
+
+    const match = sessions.find((session) => session.id === sessionId);
+    if (!match || !match.relPath) {
+      sendJson(res, 404, { error: 'Session not found.' });
+      return;
+    }
+
+    await setSessionName(source, match.relPath, name);
+    sendJson(res, 200, { ok: true, relPath: match.relPath });
     return;
   }
 
@@ -1475,26 +1556,48 @@ const server = http.createServer(async (req, res) => {
     }
 
     const archive = payload.archive !== false;
-    const statuses = await loadSessionStatuses();
-    const key = buildNameKey(source, relPath);
-    if (archive) {
-      statuses[key] = { status: 'archived', updatedAt: new Date().toISOString() };
-    } else {
-      delete statuses[key];
-    }
-    await saveSessionStatuses(statuses);
-
-    if (source === 'codex') {
-      cachedSessions = [];
-      lastScanAt = 0;
-    } else if (source === 'claude') {
-      cachedClaudeSessions = [];
-      lastClaudeScanAt = 0;
-    } else if (source === 'copilot') {
-      cachedCopilotSessions = [];
-      lastCopilotScanAt = 0;
-    }
+    await setSessionStatus(source, relPath, archive ? 'archived' : null);
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (pathname === '/api/archive-by-id') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { error: 'Method not allowed.' });
+      return;
+    }
+
+    let payload;
+    try {
+      payload = await readJsonBody(req);
+    } catch (err) {
+      sendJson(res, 400, { error: 'Invalid JSON.' });
+      return;
+    }
+
+    const source = (payload.source || '').toString();
+    const sessionId = (payload.sessionId || '').toString().trim();
+    const archive = payload.archive !== false;
+
+    if (!source || !sessionId) {
+      sendJson(res, 400, { error: 'source and sessionId are required.' });
+      return;
+    }
+
+    const sessions = source === 'claude'
+      ? await getClaudeSessions()
+      : source === 'copilot'
+        ? await getCopilotSessions()
+        : await getSessions();
+
+    const match = sessions.find((session) => session.id === sessionId);
+    if (!match || !match.relPath) {
+      sendJson(res, 404, { error: 'Session not found.' });
+      return;
+    }
+
+    await setSessionStatus(source, match.relPath, archive ? 'archived' : null);
+    sendJson(res, 200, { ok: true, relPath: match.relPath });
     return;
   }
 
@@ -1521,27 +1624,49 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const statuses = await loadSessionStatuses();
-    const key = buildNameKey(source, relPath);
-    if (complete) {
-      statuses[key] = { status: 'complete', updatedAt: new Date().toISOString() };
-    } else {
-      delete statuses[key];
-    }
-    await saveSessionStatuses(statuses);
-
-    if (source === 'codex') {
-      cachedSessions = [];
-      lastScanAt = 0;
-    } else if (source === 'claude') {
-      cachedClaudeSessions = [];
-      lastClaudeScanAt = 0;
-    } else if (source === 'copilot') {
-      cachedCopilotSessions = [];
-      lastCopilotScanAt = 0;
-    }
+    await setSessionStatus(source, relPath, complete ? 'complete' : null);
 
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (pathname === '/api/complete-by-id') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { error: 'Method not allowed.' });
+      return;
+    }
+
+    let payload;
+    try {
+      payload = await readJsonBody(req);
+    } catch (err) {
+      sendJson(res, 400, { error: 'Invalid JSON.' });
+      return;
+    }
+
+    const source = (payload.source || '').toString();
+    const sessionId = (payload.sessionId || '').toString().trim();
+    const complete = Boolean(payload.complete);
+
+    if (!source || !sessionId) {
+      sendJson(res, 400, { error: 'source and sessionId are required.' });
+      return;
+    }
+
+    const sessions = source === 'claude'
+      ? await getClaudeSessions()
+      : source === 'copilot'
+        ? await getCopilotSessions()
+        : await getSessions();
+
+    const match = sessions.find((session) => session.id === sessionId);
+    if (!match || !match.relPath) {
+      sendJson(res, 404, { error: 'Session not found.' });
+      return;
+    }
+
+    await setSessionStatus(source, match.relPath, complete ? 'complete' : null);
+    sendJson(res, 200, { ok: true, relPath: match.relPath });
     return;
   }
 

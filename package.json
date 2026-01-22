@@ -3,18 +3,49 @@
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
+  "description": "A local dashboard for managing AI coding session logs. Dock, scan, and relaunch sessions from Codex, Claude, and Copilot.",
+  "author": "Conrad Brown",
+  "main": "electron/main.js",
   "scripts": {
     "start": "node dist/server.js",
     "dev": "tsx watch server.ts",
     "build": "tsc -p tsconfig.json",
+    "build:frontend": "npm --prefix frontend run build",
+    "build:desktop": "npm run build:frontend && npm run build && electron-builder",
+    "electron": "electron .",
     "review:sessions": "tsx scripts/session-review.ts",
     "feedback:draft": "tsx scripts/feedback-draft.ts",
     "feedback:log": "tsx scripts/feedback-log.ts"
   },
   "devDependencies": {
     "@types/node": "^20.10.6",
+    "electron": "^33.4.0",
+    "electron-builder": "^24.13.3",
     "nodemon": "^3.1.0",
     "tsx": "^4.19.2",
     "typescript": "^5.5.4"
+  },
+  "build": {
+    "appId": "com.sessionharbor.app",
+    "productName": "Session Harbor",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**",
+      "dist/**",
+      "frontend/dist/**",
+      "public/**",
+      "package.json"
+    ],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon/icon-1024.png",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    }
   }
 }

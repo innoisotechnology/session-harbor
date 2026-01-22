@@ -9,9 +9,12 @@ backend/temp/*
 .production.env
 node_modules
 dist/
+dist-electron/
 data/session-names.json
 data/pending-names.json
 data/session-status.json
 data/session-meta.json
 data/feedback.jsonl
 data/feedback-drafts/
+assets/icon/app.iconset/
+assets/icon/app.icns
