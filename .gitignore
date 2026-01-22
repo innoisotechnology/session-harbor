@@ -10,6 +10,7 @@ backend/temp/*
 node_modules
 dist/
 dist-electron/
+reports/
 data/session-names.json
 data/pending-names.json
 data/session-status.json
