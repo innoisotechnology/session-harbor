@@ -14,6 +14,7 @@
             placeholder="Search sessions..."
             :aria-busy="isSearching ? 'true' : 'false'"
             class="w-full rounded-md border border-surface-200 bg-white py-1.5 pl-8 pr-8 text-sm text-surface-900 placeholder:text-surface-400 focus:border-terminal-400 focus:outline-none dark:border-surface-700 dark:bg-surface-800 dark:text-surface-100"
+            @keyup.enter="runSearch"
           />
           <div
             class="absolute right-2.5 top-1/2 -translate-y-1/2 text-surface-400 transition-opacity"
@@ -26,6 +27,13 @@
             </svg>
           </div>
         </div>
+        <button
+          class="flex h-8 items-center justify-center rounded-md border border-surface-200 px-2.5 text-xs font-medium text-surface-600 transition-colors hover:bg-surface-100 hover:text-surface-700 dark:border-surface-700 dark:text-surface-300 dark:hover:bg-surface-800 dark:hover:text-surface-200"
+          @click="runSearch"
+          title="Search"
+        >
+          Search
+        </button>
         <button
           class="flex h-8 w-8 items-center justify-center rounded-md border border-surface-200 text-surface-500 transition-colors hover:bg-surface-100 hover:text-surface-700 dark:border-surface-700 dark:hover:bg-surface-800 dark:hover:text-surface-200"
           @click="reloadAll"
@@ -391,6 +399,36 @@
         </div>
       </template>
     </section>
+
+    <!-- Full-screen refresh/search overlay -->
+    <div
+      v-if="overlayVisible"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 text-white backdrop-blur-sm"
+      role="alert"
+      aria-live="assertive"
+    >
+      <div class="mx-auto flex w-full max-w-2xl flex-col items-center px-6 text-center">
+        <div class="flex items-center gap-4">
+          <div class="relative flex h-16 w-16 items-center justify-center">
+            <span class="absolute h-16 w-16 animate-ping rounded-full bg-amber-400/40"></span>
+            <span class="absolute h-12 w-12 animate-pulse rounded-full bg-amber-400/60"></span>
+            <svg class="relative h-10 w-10 animate-spin text-amber-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="9" class="opacity-25"/>
+              <path d="M21 12a9 9 0 0 0-9-9" class="opacity-90"/>
+            </svg>
+          </div>
+          <div class="text-left">
+            <p class="text-3xl font-semibold tracking-tight">{{ overlayTitle }}</p>
+            <p class="mt-1 text-sm text-slate-200">{{ overlaySubtitle }}</p>
+          </div>
+        </div>
+        <div class="mt-8 flex w-full items-center gap-2">
+          <span class="h-1.5 w-full rounded-full bg-white/15">
+            <span class="block h-1.5 w-2/3 animate-pulse rounded-full bg-amber-300"></span>
+          </span>
+        </div>
+      </div>
+    </div>
   </main>
 </template>
 
@@ -449,13 +487,30 @@ const tagFilter = ref('');
 const notesOnly = ref(false);
 const tagInput = ref('');
 const notesInput = ref('');
-let searchTimer: ReturnType<typeof setTimeout> | null = null;
 let searchRequestId = 0;
 const isSearching = ref(false);
 const messageScrollRef = ref<HTMLElement | null>(null);
 
 const totalProjectsCount = computed(() => filteredProjects.value.reduce((sum, item) => sum + item.count, 0));
 const sessionKeyNavEnabled = computed(() => listMode.value === 'sessions');
+const overlayCount = ref(0);
+const overlayReason = ref<'search' | 'refresh'>('refresh');
+const overlayVisible = computed(() => overlayCount.value > 0);
+const overlayTitle = computed(() => (overlayReason.value === 'search' ? 'Searching sessions' : 'Refreshing sessions'));
+const overlaySubtitle = computed(() =>
+  overlayReason.value === 'search'
+    ? 'Filtering results across your session logs...'
+    : 'Updating session list and project counts...'
+);
+
+function beginOverlay(reason: 'search' | 'refresh') {
+  overlayReason.value = reason;
+  overlayCount.value += 1;
+}
+
+function endOverlay() {
+  overlayCount.value = Math.max(0, overlayCount.value - 1);
+}
 
 function sessionsEndpoint(source: string) {
   if (source === 'claude') return '/api/claude/sessions';
@@ -528,6 +583,7 @@ async function fetchProjects() {
 async function searchSessions(query: string) {
   const requestId = ++searchRequestId;
   isSearching.value = true;
+  beginOverlay('search');
   const params = new URLSearchParams({ source: activeSource.value, query });
   if (selectedProject.value) params.set('project', selectedProject.value);
   try {
@@ -540,7 +596,21 @@ async function searchSessions(query: string) {
     if (requestId === searchRequestId) {
       isSearching.value = false;
     }
+    endOverlay();
   }
+}
+
+function runSearch() {
+  const query = searchTerm.value.trim();
+  if (!query) {
+    isSearching.value = false;
+    beginOverlay('search');
+    fetchSessions()
+      .catch(() => {})
+      .finally(() => endOverlay());
+    return;
+  }
+  searchSessions(query);
 }
 
 async function selectSession(session: Session) {
@@ -665,8 +735,10 @@ async function focusSession() {
 }
 
 function reloadAll() {
-  fetchSessions();
-  fetchProjects();
+  beginOverlay('refresh');
+  Promise.all([fetchSessions(), fetchProjects()])
+    .catch(() => {})
+    .finally(() => endOverlay());
 }
 
 function isEditableTarget(target: EventTarget | null) {
@@ -722,17 +794,10 @@ watch(notesOnly, () => {
 });
 
 watch(searchTerm, (value) => {
-  if (searchTimer) clearTimeout(searchTimer);
   const query = value.trim();
   if (!query) {
     isSearching.value = false;
-    fetchSessions();
-    return;
   }
-  isSearching.value = true;
-  searchTimer = setTimeout(() => {
-    searchSessions(query);
-  }, 250);
 });
 
 watch(activeSource, () => {
