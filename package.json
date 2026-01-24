@@ -11,7 +11,8 @@
     "dev": "tsx watch server.ts",
     "build": "tsc -p tsconfig.json",
     "build:frontend": "npm --prefix frontend run build",
-    "build:desktop": "npm run build:frontend && npm run build && electron-builder",
+    "build:cli": "npm --prefix clis/session-harbor install && npm --prefix clis/session-harbor run build",
+    "build:desktop": "npm run build:frontend && npm run build && npm run build:cli && electron-builder",
     "electron": "electron .",
     "review:sessions": "tsx scripts/session-review.ts",
     "feedback:draft": "tsx scripts/feedback-draft.ts",
@@ -36,7 +37,8 @@
       "dist/**",
       "frontend/dist/**",
       "public/**",
-      "package.json"
+      "package.json",
+      "clis/session-harbor/dist/**"
     ],
     "asar": true,
     "mac": {
