@@ -11,6 +11,8 @@ permissions:
 jobs:
   build-release:
     runs-on: macos-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,10 +31,3 @@ jobs:
 
       - name: Build desktop app
         run: npm run build:desktop
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist-electron/*.dmg
-            dist-electron/*.zip
