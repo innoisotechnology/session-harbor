@@ -21,13 +21,17 @@ A local dashboard for managing AI coding session logs. Dock, scan, and relaunch 
 └────────────────────┴────────────────────────────────────────────┘
 ```
 
-## Quick Start
+## Quick Start (Desktop App)
 
 ```sh
-npm start
+# Build and package the macOS app
+npm run build:desktop
+
+# Install into /Applications
+bash scripts/install-macos-app.sh
 ```
 
-Open [localhost:3434](http://localhost:3434)
+Launch **Session Harbor** from Applications.
 
 ## Features
 
@@ -49,10 +53,10 @@ Open [localhost:3434](http://localhost:3434)
 | Claude | `~/.claude/projects` | `/api/claude/status` |
 | Copilot | `~/.copilot/session-state` | `/api/copilot/status` |
 
-## CLI Commands
+## CLI Commands (Optional)
 
 ```sh
-# Start the server
+# Start the server (development/CLI usage)
 npm start
 
 # Generate session analysis report
@@ -115,17 +119,17 @@ session-harbor/
 - **Backend**: Node.js HTTP server
 - **Data**: File-based (JSONL logs, JSON storage)
 
-## Development
+## Development (Optional)
 
 ```sh
 # Install dependencies
 npm install
 cd frontend && npm install
 
-# Run in dev mode (hot reload)
+# Run backend in dev mode (hot reload)
 npm run dev
 
-# Build for production
+# Build frontend for production
 cd frontend && npm run build
 ```
 
@@ -137,6 +141,49 @@ npm run build:desktop
 ```
 
 The packaged app is written to `dist-electron/` (DMG + ZIP). On launch, the app runs the backend in-process and serves the bundled frontend.
+
+```sh
+# Install the latest DMG/ZIP into /Applications
+bash scripts/install-macos-app.sh
+```
+
+## Releases
+
+Session Harbor publishes versioned desktop releases (DMG + ZIP) via GitHub Actions.
+
+### Create a release
+
+1. Update the version in `package.json`.
+2. Commit the change.
+3. Create and push a tag (format `vX.Y.Z`), for example:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The GitHub Actions workflow will build the macOS app and attach the DMG/ZIP artifacts
+to a GitHub Release for that tag.
+
+### Unsigned builds (Gatekeeper warning)
+
+Releases are unsigned by default. Until code signing and notarization are set up,
+macOS will show a Gatekeeper warning on first launch. Users can still run the app
+by right-clicking the app and choosing **Open**, or by allowing it in
+System Settings → Privacy & Security → Open Anyway.
+
+### Desktop Data Locations
+
+- App data (labels, status, feedback): `~/Library/Application Support/Session Harbor/data/`
+- Reports: `~/Library/Application Support/Session Harbor/reports/`
+
+You can override these with:
+
+```sh
+SESSION_HARBOR_DATA_DIR=/path/to/data \
+SESSION_HARBOR_REPORTS_DIR=/path/to/reports \
+npm run electron
+```
 
 ---
 
