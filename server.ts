@@ -27,6 +27,9 @@ const CODEX_HOME = path.join(os.homedir(), '.codex');
 const CONFIG_FILE = path.join(CODEX_HOME, 'config.toml');
 const AUTH_FILE = path.join(CODEX_HOME, 'auth.json');
 const VERSION_FILE = path.join(CODEX_HOME, 'version.json');
+const CODEX_SKILLS_DIR = path.join(CODEX_HOME, 'skills');
+const CLAUDE_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills');
+const COPILOT_SKILLS_DIR = path.join(os.homedir(), '.copilot', 'skills');
 
 let cachedSessions: any[] = [];
 let lastScanAt = 0;
@@ -363,6 +366,192 @@ function normalizeMessageContent(content) {
     parts.push(JSON.stringify(item));
   }
   return parts.join('\n');
+}
+
+type SkillSummary = {
+  name: string;
+  description: string;
+  relPath: string;
+  updatedAt?: string;
+  hasFrontMatter: boolean;
+};
+
+type SkillDetail = SkillSummary & {
+  content: string;
+  baseDir: string;
+};
+
+function skillsBaseDir(source: string) {
+  if (source === 'claude') return CLAUDE_SKILLS_DIR;
+  if (source === 'copilot') return COPILOT_SKILLS_DIR;
+  return CODEX_SKILLS_DIR;
+}
+
+function isSafeSkillPath(relPath: string) {
+  if (!relPath) return false;
+  if (relPath.includes('..')) return false;
+  if (path.isAbsolute(relPath)) return false;
+  return true;
+}
+
+async function collectSkillDirs(baseDir: string, currentDir: string, results: { relPath: string; skillFile: string }[]) {
+  let entries = [];
+  try {
+    entries = await fs.promises.readdir(currentDir, { withFileTypes: true });
+  } catch (err) {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === 'build' || entry.name === '.git') {
+      continue;
+    }
+    const dirPath = path.join(currentDir, entry.name);
+    const skillFile = path.join(dirPath, 'SKILL.md');
+    try {
+      const stat = await fs.promises.stat(skillFile);
+      if (stat.isFile()) {
+        results.push({ relPath: path.relative(baseDir, dirPath), skillFile });
+      }
+    } catch (err) {
+      // ignore missing SKILL.md
+    }
+    await collectSkillDirs(baseDir, dirPath, results);
+  }
+}
+
+function parseSkillFrontMatter(content: string) {
+  const lines = content.split(/\r?\n/);
+  if (!lines.length || lines[0].trim() !== '---') {
+    return { frontMatter: {}, bodyLines: lines, hasFrontMatter: false };
+  }
+  let endIdx = -1;
+  for (let i = 1; i < lines.length; i += 1) {
+    if (lines[i].trim() === '---') {
+      endIdx = i;
+      break;
+    }
+  }
+  if (endIdx === -1) {
+    return { frontMatter: {}, bodyLines: lines, hasFrontMatter: false };
+  }
+
+  const frontMatter: Record<string, string> = {};
+  for (let i = 1; i < endIdx; i += 1) {
+    const line = lines[i];
+    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!match) continue;
+    let value = match[2].trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    frontMatter[match[1]] = value;
+  }
+  return { frontMatter, bodyLines: lines.slice(endIdx + 1), hasFrontMatter: true };
+}
+
+function extractHeading(lines: string[]) {
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('#')) {
+      return trimmed.replace(/^#+\s*/, '').trim();
+    }
+  }
+  return '';
+}
+
+function extractDescription(lines: string[]) {
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('#')) continue;
+    return trimmed;
+  }
+  return '';
+}
+
+function buildSkillSummary(relPath: string, content: string) {
+  const parsed = parseSkillFrontMatter(content);
+  const name = (parsed.frontMatter.name || '').trim() || extractHeading(parsed.bodyLines) || path.basename(relPath);
+  const description = (parsed.frontMatter.description || '').trim() || extractDescription(parsed.bodyLines);
+  return {
+    name,
+    description,
+    hasFrontMatter: parsed.hasFrontMatter
+  };
+}
+
+async function listSkillsForSource(source: string) {
+  const baseDir = skillsBaseDir(source);
+  if (!baseDir) {
+    return { skills: [], baseDir: '', error: 'Unknown source.' };
+  }
+  if (!fs.existsSync(baseDir)) {
+    return { skills: [], baseDir, missing: true };
+  }
+
+  const entries: { relPath: string; skillFile: string }[] = [];
+  await collectSkillDirs(baseDir, baseDir, entries);
+
+  const summaries: SkillSummary[] = [];
+  for (const entry of entries) {
+    let content = '';
+    try {
+      content = await fs.promises.readFile(entry.skillFile, 'utf8');
+    } catch (err) {
+      continue;
+    }
+    let updatedAt;
+    try {
+      const stat = await fs.promises.stat(entry.skillFile);
+      updatedAt = stat.mtime ? stat.mtime.toISOString() : undefined;
+    } catch (err) {
+      updatedAt = undefined;
+    }
+    const summary = buildSkillSummary(entry.relPath, content);
+    summaries.push({
+      ...summary,
+      relPath: entry.relPath,
+      updatedAt
+    });
+  }
+
+  summaries.sort((a, b) => a.name.localeCompare(b.name));
+  return { skills: summaries, baseDir };
+}
+
+async function readSkillDetail(source: string, relPath: string): Promise<SkillDetail | null> {
+  const baseDir = skillsBaseDir(source);
+  if (!baseDir) return null;
+  if (!isSafeSkillPath(relPath)) return null;
+
+  const skillDir = path.resolve(baseDir, relPath);
+  const normalizedBase = baseDir.endsWith(path.sep) ? baseDir : `${baseDir}${path.sep}`;
+  if (!skillDir.startsWith(normalizedBase)) return null;
+  const skillFile = path.join(skillDir, 'SKILL.md');
+  let content = '';
+  try {
+    content = await fs.promises.readFile(skillFile, 'utf8');
+  } catch (err) {
+    return null;
+  }
+  let updatedAt;
+  try {
+    const stat = await fs.promises.stat(skillFile);
+    updatedAt = stat.mtime ? stat.mtime.toISOString() : undefined;
+  } catch (err) {
+    updatedAt = undefined;
+  }
+  const summary = buildSkillSummary(relPath, content);
+  return {
+    ...summary,
+    relPath,
+    content,
+    baseDir,
+    updatedAt
+  };
 }
 
 function parseSessionMessages(rawContent) {
@@ -1280,6 +1469,29 @@ const server = http.createServer(async (req, res) => {
         return a.path.localeCompare(b.path);
       });
     sendJson(res, 200, { projects });
+    return;
+  }
+
+  if (pathname === '/api/skills') {
+    const source = (parsedUrl.query.source || 'codex').toString();
+    const result = await listSkillsForSource(source);
+    sendJson(res, 200, result);
+    return;
+  }
+
+  if (pathname === '/api/skill') {
+    const source = (parsedUrl.query.source || 'codex').toString();
+    const relPath = (parsedUrl.query.path || '').toString();
+    if (!relPath) {
+      sendJson(res, 400, { error: 'path is required.' });
+      return;
+    }
+    const detail = await readSkillDetail(source, relPath);
+    if (!detail) {
+      sendJson(res, 404, { error: 'Skill not found.' });
+      return;
+    }
+    sendJson(res, 200, { skill: detail });
     return;
   }
 

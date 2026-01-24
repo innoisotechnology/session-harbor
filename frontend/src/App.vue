@@ -105,6 +105,7 @@ const sources = [
 
 const navItems = [
   { path: '/sessions', label: 'Sessions' },
+  { path: '/skills', label: 'Skills' },
   { path: '/status', label: 'Status' },
   { path: '/reports', label: 'Reports' },
   { path: '/feedback', label: 'Feedback' }
