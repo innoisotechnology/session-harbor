@@ -99,12 +99,14 @@ const statusData = ref<StatusPayload | null>(null);
 function statusEndpoint(source: string) {
   if (source === 'claude') return '/api/claude/status';
   if (source === 'copilot') return '/api/copilot/status';
+  if (source === 'openclaw') return '/api/openclaw/status';
   return '/api/status';
 }
 
 function sourceLabel(source: string) {
   if (source === 'claude') return 'Claude';
   if (source === 'copilot') return 'Copilot';
+  if (source === 'openclaw') return 'Openclaw';
   return 'Codex';
 }
 

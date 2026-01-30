@@ -15,6 +15,7 @@ const FRONTEND_DIR = path.join(APP_ROOT, 'frontend', 'dist');
 const SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
 const CLAUDE_DIR = path.join(os.homedir(), '.claude', 'projects');
 const COPILOT_DIR = path.join(os.homedir(), '.copilot', 'session-state');
+const OPENCLAW_DIR = path.join(os.homedir(), '.clawdbot', 'agents', 'main', 'sessions');
 const SESSION_EXT = '.jsonl';
 const DATA_DIR = process.env.SESSION_HARBOR_DATA_DIR || path.join(APP_ROOT, 'data');
 const NAMES_FILE = path.join(DATA_DIR, 'session-names.json');
@@ -30,6 +31,7 @@ const VERSION_FILE = path.join(CODEX_HOME, 'version.json');
 const CODEX_SKILLS_DIR = path.join(CODEX_HOME, 'skills');
 const CLAUDE_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills');
 const COPILOT_SKILLS_DIR = path.join(os.homedir(), '.copilot', 'skills');
+const OPENCLAW_SKILLS_DIR = path.join(os.homedir(), 'clawd', 'skills');
 
 let cachedSessions: any[] = [];
 let lastScanAt = 0;
@@ -37,6 +39,8 @@ let cachedClaudeSessions: any[] = [];
 let lastClaudeScanAt = 0;
 let cachedCopilotSessions: any[] = [];
 let lastCopilotScanAt = 0;
+let cachedOpenclawSessions: any[] = [];
+let lastOpenclawScanAt = 0;
 const CACHE_TTL_MS = 10_000;
 
 function resolveAppRoot() {
@@ -215,6 +219,10 @@ function toRelativeClaudePath(filePath) {
   return path.relative(CLAUDE_DIR, filePath);
 }
 
+function toRelativeOpenclawPath(filePath) {
+  return path.relative(OPENCLAW_DIR, filePath);
+}
+
 async function loadSessionNames(): Promise<Record<string, string>> {
   try {
     const raw = await fs.promises.readFile(NAMES_FILE, 'utf8');
@@ -384,6 +392,7 @@ type SkillDetail = SkillSummary & {
 function skillsBaseDir(source: string) {
   if (source === 'claude') return CLAUDE_SKILLS_DIR;
   if (source === 'copilot') return COPILOT_SKILLS_DIR;
+  if (source === 'openclaw') return OPENCLAW_SKILLS_DIR;
   return CODEX_SKILLS_DIR;
 }
 
@@ -974,6 +983,115 @@ async function getCopilotSessions() {
   return cachedCopilotSessions;
 }
 
+// ---- Openclaw (Clawdbot/Molt/Openclaw) sessions ----
+
+function isSafeOpenclawPath(relPath) {
+  if (!relPath) return false;
+  const resolved = path.resolve(OPENCLAW_DIR, relPath);
+  const base = path.resolve(OPENCLAW_DIR) + path.sep;
+  return resolved.startsWith(base);
+}
+
+function parseOpenclawMessages(rawContent) {
+  const messages = [];
+  if (!rawContent) return messages;
+
+  const lines = rawContent.split(/\r?\n/).filter(Boolean);
+  for (const line of lines) {
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch (err) {
+      continue;
+    }
+
+    if (parsed?.type !== 'message') continue;
+
+    const msg = parsed.message || {};
+    const role = msg.role || 'unknown';
+    const text = normalizeMessageContent(msg.content).trim();
+    if (!text) continue;
+
+    messages.push({
+      role,
+      timestamp: parsed.timestamp || null,
+      text,
+    });
+  }
+
+  return messages;
+}
+
+async function loadOpenclawSessions() {
+  const files = await listSessionFiles(OPENCLAW_DIR);
+  const sessions = [];
+  const names = await loadSessionNames();
+  const meta = await loadSessionMeta();
+  const statuses = await loadSessionStatuses();
+
+  for (const filePath of files) {
+    let firstLine = '';
+    try {
+      firstLine = await readFirstLine(filePath);
+    } catch (err) {
+      continue;
+    }
+    if (!firstLine) continue;
+
+    let parsed;
+    try {
+      parsed = JSON.parse(firstLine);
+    } catch (err) {
+      continue;
+    }
+
+    if (!parsed || parsed.type !== 'session') continue;
+
+    const relPath = toRelativeOpenclawPath(filePath);
+    const statusKey = buildNameKey('openclaw', relPath);
+    const statusEntry = statuses[statusKey];
+    const metaEntry = meta[statusKey] || {};
+
+    const messageCount = await countJsonlMessages(filePath, (entry) => {
+      const role = entry?.message?.role;
+      return entry?.type === 'message' && (role === 'user' || role === 'assistant');
+    });
+
+    const cwd = parsed.cwd || null;
+
+    sessions.push({
+      id: parsed.id || null,
+      timestamp: parsed.timestamp || null,
+      cwd,
+      project: cwd,
+      relPath,
+      fileName: path.basename(filePath),
+      name: names[buildNameKey('openclaw', relPath)] || '',
+      messageCount,
+      status: normalizeStatus(statusEntry?.status),
+      tags: Array.isArray(metaEntry.tags) ? metaEntry.tags : [],
+      notes: typeof metaEntry.notes === 'string' ? metaEntry.notes : '',
+    });
+  }
+
+  sessions.sort((a, b) => {
+    const aTime = a.timestamp ? Date.parse(a.timestamp) : 0;
+    const bTime = b.timestamp ? Date.parse(b.timestamp) : 0;
+    return bTime - aTime;
+  });
+
+  cachedOpenclawSessions = sessions;
+  lastOpenclawScanAt = Date.now();
+  return sessions;
+}
+
+async function getOpenclawSessions() {
+  if (!cachedOpenclawSessions.length || Date.now() - lastOpenclawScanAt > CACHE_TTL_MS) {
+    return loadOpenclawSessions();
+  }
+  return cachedOpenclawSessions;
+}
+
 function sendJson(res, status, payload) {
   const body = JSON.stringify(payload, null, 2);
   res.writeHead(status, {
@@ -1126,6 +1244,19 @@ function getSearchMatcher(source, queryLower) {
       if (entry.type !== 'user.message' && entry.type !== 'assistant.message') return null;
       const data = entry.data || {};
       const text = String(data.content || data.transformedContent || '').trim();
+      if (!text) return null;
+      return text.toLowerCase().includes(queryLower) ? text : null;
+    };
+  }
+
+  if (source === 'openclaw') {
+    return (entry) => {
+      if (!entry || !entry.type) return null;
+      if (entry.type !== 'message') return null;
+      const msg = entry.message || {};
+      const role = msg.role;
+      if (role !== 'user' && role !== 'assistant') return null;
+      const text = normalizeMessageContent(msg.content).trim();
       if (!text) return null;
       return text.toLowerCase().includes(queryLower) ? text : null;
     };
@@ -1450,13 +1581,31 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (pathname === '/api/openclaw/sessions') {
+    const search = (parsedUrl.query.search || '').toString().toLowerCase();
+    const sessions = await getOpenclawSessions();
+    const filtered = search
+      ? sessions.filter((session) => {
+          const haystack = [session.fileName, session.project, session.cwd, session.id, session.relPath, session.name, session.tags?.join(' '), session.notes]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
+          return haystack.includes(search);
+        })
+      : sessions;
+    sendJson(res, 200, { sessions: filtered });
+    return;
+  }
+
   if (pathname === '/api/projects') {
     const source = (parsedUrl.query.source || 'codex').toString();
     const sessions = source === 'claude'
       ? await getClaudeSessions()
       : source === 'copilot'
         ? await getCopilotSessions()
-        : await getSessions();
+        : source === 'openclaw'
+          ? await getOpenclawSessions()
+          : await getSessions();
     const counts = new Map();
     filterArchived(sessions).forEach((session) => {
       const key = session.project || session.cwd || 'Unknown';
@@ -1543,7 +1692,9 @@ const server = http.createServer(async (req, res) => {
       ? await getClaudeSessions()
       : source === 'copilot'
         ? await getCopilotSessions()
-        : await getSessions();
+        : source === 'openclaw'
+          ? await getOpenclawSessions()
+          : await getSessions();
     const filtered = project
       ? sessions.filter((session) => {
           const projectKey = session.project || session.cwd || '';
@@ -1560,7 +1711,9 @@ const server = http.createServer(async (req, res) => {
         ? path.resolve(CLAUDE_DIR, session.relPath)
         : source === 'copilot'
           ? path.resolve(COPILOT_DIR, session.relPath)
-          : path.resolve(SESSIONS_DIR, session.relPath);
+          : source === 'openclaw'
+            ? path.resolve(OPENCLAW_DIR, session.relPath)
+            : path.resolve(SESSIONS_DIR, session.relPath);
       let matchInfo;
       try {
         matchInfo = await searchJsonlMessages(fullPath, matcher);
@@ -1642,6 +1795,30 @@ const server = http.createServer(async (req, res) => {
         messages,
         messageCount: messages.length,
         meta: { sessionId: fallbackId }
+      });
+    } catch (err) {
+      sendJson(res, 404, { error: 'File not found.' });
+    }
+    return;
+  }
+
+  if (pathname === '/api/openclaw/session') {
+    const relPath = (parsedUrl.query.file || '').toString();
+    if (!isSafeOpenclawPath(relPath)) {
+      sendJson(res, 400, { error: 'Invalid file path.' });
+      return;
+    }
+
+    const fullPath = path.resolve(OPENCLAW_DIR, relPath);
+    try {
+      const content = await fs.promises.readFile(fullPath, 'utf8');
+      const messages = parseOpenclawMessages(content);
+      sendJson(res, 200, {
+        relPath,
+        content,
+        messages,
+        messageCount: messages.length,
+        meta: {}
       });
     } catch (err) {
       sendJson(res, 404, { error: 'File not found.' });
@@ -1732,7 +1909,9 @@ const server = http.createServer(async (req, res) => {
       ? await getClaudeSessions()
       : source === 'copilot'
         ? await getCopilotSessions()
-        : await getSessions();
+        : source === 'openclaw'
+          ? await getOpenclawSessions()
+          : await getSessions();
 
     const match = sessions.find((session) => session.id === sessionId);
     if (!match || !match.relPath) {
@@ -1800,7 +1979,9 @@ const server = http.createServer(async (req, res) => {
       ? await getClaudeSessions()
       : source === 'copilot'
         ? await getCopilotSessions()
-        : await getSessions();
+        : source === 'openclaw'
+          ? await getOpenclawSessions()
+          : await getSessions();
 
     const match = sessions.find((session) => session.id === sessionId);
     if (!match || !match.relPath) {
@@ -1869,7 +2050,9 @@ const server = http.createServer(async (req, res) => {
       ? await getClaudeSessions()
       : source === 'copilot'
         ? await getCopilotSessions()
-        : await getSessions();
+        : source === 'openclaw'
+          ? await getOpenclawSessions()
+          : await getSessions();
 
     const match = sessions.find((session) => session.id === sessionId);
     if (!match || !match.relPath) {
@@ -1924,6 +2107,9 @@ const server = http.createServer(async (req, res) => {
     } else if (source === 'copilot') {
       cachedCopilotSessions = [];
       lastCopilotScanAt = 0;
+    } else if (source === 'openclaw') {
+      cachedOpenclawSessions = [];
+      lastOpenclawScanAt = 0;
     }
 
     sendJson(res, 200, { ok: true });
@@ -2042,6 +2228,19 @@ const server = http.createServer(async (req, res) => {
     const latest = (await getCopilotSessions())[0];
     sendJson(res, 200, {
       source: 'copilot',
+      cwd: latest?.cwd || null,
+      sessionId: latest?.id || null,
+      cliVersion: null,
+      model: null,
+      account: {}
+    });
+    return;
+  }
+
+  if (pathname === '/api/openclaw/status') {
+    const latest = (await getOpenclawSessions())[0];
+    sendJson(res, 200, {
+      source: 'openclaw',
       cwd: latest?.cwd || null,
       sessionId: latest?.id || null,
       cliVersion: null,

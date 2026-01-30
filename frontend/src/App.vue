@@ -14,7 +14,7 @@
           </div>
           <div class="flex items-baseline gap-3">
             <h1 class="text-lg font-semibold tracking-tight">Session Harbor</h1>
-            <span class="hidden text-xs text-surface-400 sm:inline">Codex / Claude / Copilot</span>
+            <span class="hidden text-xs text-surface-400 sm:inline">Codex / Claude / Copilot / Openclaw</span>
           </div>
         </div>
 
@@ -100,7 +100,8 @@ const {
 const sources = [
   { id: 'codex', label: 'Codex' },
   { id: 'claude', label: 'Claude' },
-  { id: 'copilot', label: 'Copilot' }
+  { id: 'copilot', label: 'Copilot' },
+  { id: 'openclaw', label: 'Openclaw' }
 ] as const;
 
 const navItems = [
