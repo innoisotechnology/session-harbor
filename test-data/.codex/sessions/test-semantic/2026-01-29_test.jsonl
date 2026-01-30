@@ -1,0 +1,3 @@
+{"type":"event_msg","payload":{"type":"user_message","message":"How do we do semantic search over session logs?"}}
+{"type":"event_msg","payload":{"type":"assistant_message","message":"Embed session text and rank by cosine similarity."}}
+{"type":"event_msg","payload":{"type":"user_message","message":"Also handle rate limiting and incremental indexing."}}

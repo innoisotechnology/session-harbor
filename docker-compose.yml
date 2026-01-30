@@ -9,6 +9,7 @@ services:
       HOST: 0.0.0.0
       PORT: 3434
       NODE_ENV: development
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
     command: >
       sh -c '
         if [ ! -x node_modules/.bin/tsx ]; then npm install; fi;

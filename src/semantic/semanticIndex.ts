@@ -295,8 +295,11 @@ export async function indexSessionEmbeddingsIncremental(options: SemanticIndexOp
         });
         stats.embedded += 1;
         await sleep(embedDelayMs);
-      } catch {
+      } catch (err: any) {
         stats.errors += 1;
+        // Log a short error once per file to aid debugging (avoid dumping full API key or giant bodies)
+        const msg = err?.message ? String(err.message).slice(0, 500) : String(err).slice(0, 500);
+        console.warn(`Semantic index embed failed (${src.provider}:${relPath}): ${msg}`);
       }
     }
   }

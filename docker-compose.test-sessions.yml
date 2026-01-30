@@ -1,0 +1,7 @@
+services:
+  backend:
+    volumes:
+      # Use local test sessions instead of relying on host ~/.codex/~/.claude/~/.copilot (which may be empty or permission-locked)
+      - ./test-data/.codex:/root/.codex
+      - ./test-data/.claude:/root/.claude
+      - ./test-data/.copilot:/root/.copilot
