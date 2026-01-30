@@ -3,9 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import readline from 'readline';
 
-// NOTE: This repo is CommonJS, but TypeScript will compile this import.
-// The package is expected to be available in the environment (private registry).
-import { generateEmbeddingsOpenAi } from '@innoisotechnology/ai-library';
+import { generateOpenAiEmbeddings } from './openaiEmbeddings';
 
 export type SessionSource = 'codex' | 'claude' | 'copilot';
 
@@ -281,7 +279,7 @@ export async function indexSessionEmbeddingsIncremental(options: SemanticIndexOp
       }
 
       try {
-        const vectors = await generateEmbeddingsOpenAi([text]);
+        const vectors = await generateOpenAiEmbeddings([text]);
         const embedding = vectors?.[0];
         if (!embedding || !Array.isArray(embedding)) {
           throw new Error('Embedding generation returned empty result.');
@@ -293,7 +291,7 @@ export async function indexSessionEmbeddingsIncremental(options: SemanticIndexOp
           updated_at: stat.mtime.toISOString(),
           content_hash,
           embedding,
-          model: 'text-embedding-ada-002',
+          model: 'text-embedding-3-small',
         });
         stats.embedded += 1;
         await sleep(embedDelayMs);
@@ -318,7 +316,7 @@ export async function semanticSearch(options: SemanticIndexOptions & { query: st
   const records = Array.from(index.values());
   if (!records.length) return [];
 
-  const vectors = await generateEmbeddingsOpenAi([options.query]);
+  const vectors = await generateOpenAiEmbeddings([options.query]);
   const qvec = vectors?.[0];
   if (!qvec || !Array.isArray(qvec)) {
     throw new Error('Failed to generate query embedding.');

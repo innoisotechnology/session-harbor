@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { generateEmbeddingsOpenAi } from '@innoisotechnology/ai-library';
+import { generateOpenAiEmbeddings } from './openaiEmbeddings.js';
 
 import type { SessionSource, SessionRecord } from './sessions.js';
 
@@ -87,7 +87,7 @@ export async function semanticSearchSessions(params: {
     return [];
   }
 
-  const vectors = await generateEmbeddingsOpenAi([params.query]);
+  const vectors = await generateOpenAiEmbeddings([params.query]);
   const qvec = vectors?.[0];
   if (!qvec || !Array.isArray(qvec)) {
     throw new Error('Failed to generate query embedding.');
