@@ -1,6 +1,6 @@
 import { ref } from 'vue';
 
-export type SessionSource = 'codex' | 'claude' | 'copilot';
+export type SessionSource = 'codex' | 'claude' | 'copilot' | 'openclaw';
 
 const STORAGE_KEY = 'session-harbor-source';
 const activeSource = ref<SessionSource>(loadSource());
@@ -8,7 +8,7 @@ const activeSource = ref<SessionSource>(loadSource());
 function loadSource(): SessionSource {
   if (typeof window === 'undefined') return 'codex';
   const stored = window.localStorage.getItem(STORAGE_KEY);
-  if (stored === 'codex' || stored === 'claude' || stored === 'copilot') return stored;
+  if (stored === 'codex' || stored === 'claude' || stored === 'copilot' || stored === 'openclaw') return stored;
   return 'codex';
 }
 

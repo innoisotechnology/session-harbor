@@ -515,12 +515,14 @@ function endOverlay() {
 function sessionsEndpoint(source: string) {
   if (source === 'claude') return '/api/claude/sessions';
   if (source === 'copilot') return '/api/copilot/sessions';
+  if (source === 'openclaw') return '/api/openclaw/sessions';
   return '/api/sessions';
 }
 
 function sessionEndpoint(source: string) {
   if (source === 'claude') return '/api/claude/session';
   if (source === 'copilot') return '/api/copilot/session';
+  if (source === 'openclaw') return '/api/openclaw/session';
   return '/api/session';
 }
 
