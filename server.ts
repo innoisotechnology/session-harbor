@@ -6,6 +6,11 @@ import os from 'os';
 import { spawn } from 'child_process';
 import readline from 'readline';
 import https from 'https';
+import {
+  indexSessionEmbeddingsIncremental,
+  semanticSearch,
+  type SemanticSearchResult,
+} from './src/semantic/semanticIndex';
 
 const PORT = Number(process.env.PORT) || 3434;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -1530,6 +1535,82 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (pathname === '/api/index/semantic') {
+    try {
+      const stats = await indexSessionEmbeddingsIncremental({
+        dataDir: DATA_DIR,
+        sessionsDir: SESSIONS_DIR,
+        claudeDir: CLAUDE_DIR,
+        copilotDir: COPILOT_DIR,
+      });
+      sendJson(res, 200, { ok: true, stats });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const code = (err as any)?.code;
+      if (code === 'NO_OPENAI_KEY') {
+        sendJson(res, 400, { error: message, code });
+      } else {
+        sendJson(res, 500, { error: message });
+      }
+    }
+    return;
+  }
+
+  if (pathname === '/api/search/semantic') {
+    const query = (parsedUrl.query.q || '').toString().trim();
+    const limit = Number(parsedUrl.query.limit) || 10;
+    if (!query) {
+      sendJson(res, 400, { error: 'q is required.' });
+      return;
+    }
+
+    try {
+      const results = await semanticSearch({
+        dataDir: DATA_DIR,
+        sessionsDir: SESSIONS_DIR,
+        claudeDir: CLAUDE_DIR,
+        copilotDir: COPILOT_DIR,
+        query,
+        limit,
+      });
+
+      // Enrich with session metadata (name/id) if available.
+      const codex = await getSessions();
+      const claude = await getClaudeSessions();
+      const copilot = await getCopilotSessions();
+      const codexMap = new Map(codex.map((s) => [s.relPath, s]));
+      const claudeMap = new Map(claude.map((s) => [s.relPath, s]));
+      const copilotMap = new Map(copilot.map((s) => [s.relPath, s]));
+
+      const enriched = results.map((r: SemanticSearchResult) => {
+        const meta = r.provider === 'claude'
+          ? claudeMap.get(r.relPath)
+          : r.provider === 'copilot'
+            ? copilotMap.get(r.relPath)
+            : codexMap.get(r.relPath);
+        return {
+          ...r,
+          id: meta?.id || null,
+          name: meta?.name || meta?.fileName || r.relPath,
+          fileName: meta?.fileName || path.basename(r.relPath),
+          project: meta?.project || meta?.cwd || null,
+          status: meta?.status || 'active',
+        };
+      });
+
+      sendJson(res, 200, { query, results: enriched });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const code = (err as any)?.code;
+      if (code === 'NO_OPENAI_KEY') {
+        sendJson(res, 400, { error: message, code });
+      } else {
+        sendJson(res, 500, { error: message });
+      }
+    }
+    return;
+  }
+
   if (pathname === '/api/search') {
     const source = (parsedUrl.query.source || 'codex').toString();
     const query = (parsedUrl.query.query || '').toString().trim();
@@ -2094,7 +2175,29 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
+async function runStartupIndex() {
+  if (!process.env.OPENAI_API_KEY) {
+    console.log('Semantic index: OPENAI_API_KEY not set; skipping embedding indexing.');
+    return;
+  }
+
+  // Run in the background: do not block the server from starting.
+  try {
+    const stats = await indexSessionEmbeddingsIncremental({
+      dataDir: DATA_DIR,
+      sessionsDir: SESSIONS_DIR,
+      claudeDir: CLAUDE_DIR,
+      copilotDir: COPILOT_DIR,
+    });
+    console.log(`Semantic index: scanned=${stats.scanned} embedded=${stats.embedded} skipped=${stats.skipped} errors=${stats.errors}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`Semantic index: failed: ${message}`);
+  }
+}
+
 server.listen(PORT, HOST, () => {
   console.log(`Codex session browser running at http://${HOST}:${PORT}`);
   console.log(`Reading sessions from ${SESSIONS_DIR}`);
+  void runStartupIndex();
 });

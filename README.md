@@ -66,6 +66,18 @@ npm run review:sessions -- --source both --limit 100
 npm run feedback:log
 ```
 
+### Semantic search from the CLI
+
+The CLI reads `data/session-embeddings.jsonl` and generates an embedding for your query.
+
+```sh
+# Requires OPENAI_API_KEY and an existing embedding index
+session-harbor session-search --semantic --query "where did we discuss rate limiting?" --limit 10
+
+# (Optional) filter to a provider
+session-harbor session-search --semantic --source codex --query "vector" --limit 10
+```
+
 ## API Endpoints
 
 ### Sessions
@@ -98,14 +110,24 @@ GET  /api/report?name=<name>    # Get report detail
 GET  /api/feedback-log          # Get feedback entries
 ```
 
+### Semantic Search (Embeddings)
+
+Requires `OPENAI_API_KEY`.
+
+```
+GET  /api/index/semantic                     # (Re)index new/changed sessions into local embeddings store
+GET  /api/search/semantic?q=<query>&limit=10 # Semantic search across indexed sessions
+```
+
 ## Data Storage
 
 ```
 session-harbor/
 ├── data/
-│   ├── session-names.json    # Custom session labels
-│   ├── pending-names.json    # Pending name assignments
-│   └── feedback.jsonl        # Feedback log
+│   ├── session-names.json            # Custom session labels
+│   ├── pending-names.json            # Pending name assignments
+│   ├── session-embeddings.jsonl      # Local semantic search embeddings
+│   └── feedback.jsonl                # Feedback log
 └── reports/
     └── session-review-*/     # Generated reports
         ├── summary.md

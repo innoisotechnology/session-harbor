@@ -16,7 +16,9 @@ import {
   type SessionStatus,
   resolveSessionPath,
   type SessionRecord,
+  DATA_DIR,
 } from './services/sessions.js';
+import { semanticSearchSessions } from './services/semantic.js';
 
 const DEFAULT_SOURCE: SessionSource = 'codex';
 
@@ -76,17 +78,59 @@ export function createSessionHarborToolset() {
             source: { type: 'string' },
             query: { type: 'string' },
             mode: { type: 'string' },
+            semantic: { type: 'boolean', description: 'Enable semantic (embedding) search. Requires session embeddings indexed and OPENAI_API_KEY.' },
+            limit: { type: 'number' },
             project: { type: 'string' },
             includeArchived: { type: 'boolean' },
             debug: { type: 'boolean' },
           }
         },
         run: async (input) => {
-          const source = normalizeSource((input as any)?.source);
+          const rawSource = toStringOrUndefined((input as any)?.source);
+          const source = normalizeSource(rawSource);
           const query = requireString((input as any)?.query, 'query');
           const mode = normalizeMode((input as any)?.mode);
+          const semantic = toBoolean((input as any)?.semantic) || mode === 'semantic';
+          const limit = toNumber((input as any)?.limit);
           const project = toStringOrUndefined((input as any)?.project);
           const includeArchived = toBoolean((input as any)?.includeArchived);
+
+          if (semantic) {
+            const [codex, claude, copilot] = await Promise.all([
+              listSessions('codex'),
+              listSessions('claude'),
+              listSessions('copilot'),
+            ]);
+
+            const matches = await semanticSearchSessions({
+              dataDir: DATA_DIR,
+              query,
+              limit,
+              sessionsByProvider: { codex, claude, copilot },
+            });
+
+            const filtered = matches
+              .map((match) => {
+                return {
+                  provider: match.provider,
+                  relPath: match.relPath,
+                  score: match.score,
+                  session: match.session || null,
+                };
+              })
+              .filter((match) => {
+                if (rawSource && match.provider !== source) return false;
+                const status = match.session?.status;
+                if (!includeArchived && status === 'archived') return false;
+                if (project) {
+                  const projectKey = match.session?.project || match.session?.cwd || '';
+                  if (projectKey !== project) return false;
+                }
+                return true;
+              });
+
+            return { mode: 'semantic', query, total: filtered.length, results: filtered };
+          }
 
           if (mode === 'messages') {
             const matches = await searchSessionsByMessages(source, query, project);
