@@ -434,6 +434,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { useSourceStore } from '../store/source';
 
 type Session = {
@@ -470,6 +471,7 @@ type ProjectSummary = {
 };
 
 const { activeSource } = useSourceStore();
+const route = useRoute();
 const sessions = ref<Session[]>([]);
 const filteredSessions = ref<Session[]>([]);
 const projects = ref<ProjectSummary[]>([]);
@@ -571,6 +573,7 @@ async function fetchSessions() {
   sessions.value = data.sessions || [];
   filteredSessions.value = sessions.value;
   applyFilters();
+  await selectSessionFromRoute();
 }
 
 async function fetchProjects() {
@@ -622,6 +625,24 @@ async function selectSession(session: Session) {
   const response = await fetch(`${sessionEndpoint(activeSource.value)}?file=${encodeURIComponent(session.relPath)}`);
   const data = await response.json();
   activeSessionDetail.value = data;
+}
+
+async function selectSessionFromRoute() {
+  const relPath = typeof route.query.relPath === 'string' ? route.query.relPath : '';
+  const sessionId = typeof route.query.sessionId === 'string' ? route.query.sessionId : '';
+  if (!relPath && !sessionId) return;
+  const match = sessions.value.find((session) =>
+    relPath ? session.relPath === relPath : sessionId ? session.id === sessionId : false
+  );
+  if (!match) return;
+  if (activeSession.value?.relPath === match.relPath) return;
+  statusFilter.value = 'all';
+  notesOnly.value = false;
+  tagFilter.value = '';
+  selectedProject.value = '';
+  listMode.value = 'sessions';
+  applyFilters();
+  await selectSession(match);
 }
 
 async function saveSessionName() {
@@ -816,6 +837,13 @@ watch(activeSource, () => {
   fetchSessions();
   fetchProjects();
 });
+
+watch(
+  () => route.query,
+  () => {
+    selectSessionFromRoute();
+  }
+);
 
 watch(activeSessionDetail, async (value) => {
   if (!value) return;

@@ -32,10 +32,10 @@ export function createSessionHarborToolset() {
         inputSchema: {
           type: 'object',
           properties: {
-            source: { type: 'string' },
+            source: { type: 'string', enum: ['codex', 'claude', 'copilot'] },
             limit: { type: 'number' },
             offset: { type: 'number' },
-            status: { type: 'string' },
+            status: { type: 'string', enum: ['active', 'complete', 'archived'] },
             includeArchived: { type: 'boolean' },
             project: { type: 'string' },
             search: { type: 'string' },
@@ -73,9 +73,9 @@ export function createSessionHarborToolset() {
           type: 'object',
           required: ['query'],
           properties: {
-            source: { type: 'string' },
+            source: { type: 'string', enum: ['codex', 'claude', 'copilot'] },
             query: { type: 'string' },
-            mode: { type: 'string' },
+            mode: { type: 'string', enum: ['meta', 'messages'] },
             project: { type: 'string' },
             includeArchived: { type: 'boolean' },
             debug: { type: 'boolean' },
@@ -107,7 +107,7 @@ export function createSessionHarborToolset() {
         inputSchema: {
           type: 'object',
           properties: {
-            source: { type: 'string' },
+            source: { type: 'string', enum: ['codex', 'claude', 'copilot'] },
             relPath: { type: 'string' },
             sessionId: { type: 'string' },
             includeMessages: { type: 'boolean' },
@@ -138,7 +138,7 @@ export function createSessionHarborToolset() {
         inputSchema: {
           type: 'object',
           properties: {
-            source: { type: 'string' },
+            source: { type: 'string', enum: ['codex', 'claude', 'copilot'] },
             relPath: { type: 'string' },
             sessionId: { type: 'string' },
             name: { type: 'string' },
@@ -163,7 +163,7 @@ export function createSessionHarborToolset() {
         inputSchema: {
           type: 'object',
           properties: {
-            source: { type: 'string' },
+            source: { type: 'string', enum: ['codex', 'claude', 'copilot'] },
             relPath: { type: 'string' },
             sessionId: { type: 'string' },
             tags: { type: ['array', 'string'] },
@@ -191,10 +191,10 @@ export function createSessionHarborToolset() {
           type: 'object',
           required: ['status'],
           properties: {
-            source: { type: 'string' },
+            source: { type: 'string', enum: ['codex', 'claude', 'copilot'] },
             relPath: { type: 'string' },
             sessionId: { type: 'string' },
-            status: { type: 'string' },
+            status: { type: 'string', enum: ['active', 'complete', 'archived'] },
             debug: { type: 'boolean' },
           }
         },
@@ -216,7 +216,7 @@ export function createSessionHarborToolset() {
         inputSchema: {
           type: 'object',
           properties: {
-            source: { type: 'string' },
+            source: { type: 'string', enum: ['codex', 'claude', 'copilot'] },
             relPath: { type: 'string' },
             sessionId: { type: 'string' },
             debug: { type: 'boolean' },
@@ -238,7 +238,7 @@ export function createSessionHarborToolset() {
         inputSchema: {
           type: 'object',
           properties: {
-            source: { type: 'string' },
+            source: { type: 'string', enum: ['codex', 'claude', 'copilot'] },
             relPath: { type: 'string' },
             sessionId: { type: 'string' },
             debug: { type: 'boolean' },
@@ -260,7 +260,7 @@ export function createSessionHarborToolset() {
         inputSchema: {
           type: 'object',
           properties: {
-            source: { type: 'string' },
+            source: { type: 'string', enum: ['codex', 'claude', 'copilot'] },
             relPath: { type: 'string' },
             sessionId: { type: 'string' },
             debug: { type: 'boolean' },
@@ -272,7 +272,8 @@ export function createSessionHarborToolset() {
           const sessionId = toStringOrUndefined((input as any)?.sessionId);
           const session = await resolveSessionRecord(source, relPath, sessionId);
           await setSessionStatus(source, session.relPath, 'complete');
-          return { ok: true, source, relPath: session.relPath, status: 'complete' };
+          const resolvedSessionId = session.id ?? sessionId ?? null;
+          return { ok: true, source, relPath: session.relPath, sessionId: resolvedSessionId, status: 'complete' };
         }
       },
       {
@@ -282,7 +283,7 @@ export function createSessionHarborToolset() {
         inputSchema: {
           type: 'object',
           properties: {
-            source: { type: 'string' },
+            source: { type: 'string', enum: ['codex', 'claude', 'copilot'] },
             relPath: { type: 'string' },
             sessionId: { type: 'string' },
             debug: { type: 'boolean' },
@@ -388,5 +389,9 @@ async function resolveSessionRecord(source: SessionSource, relPath?: string, ses
     }
     return match;
   }
-  throw new Error('relPath or sessionId is required.');
+  const sessions = await listSessions(source);
+  if (!sessions.length) {
+    throw new Error('No sessions found.');
+  }
+  return sessions[0];
 }
