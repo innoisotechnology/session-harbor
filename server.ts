@@ -31,6 +31,181 @@ const CODEX_SKILLS_DIR = path.join(CODEX_HOME, 'skills');
 const CLAUDE_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills');
 const COPILOT_SKILLS_DIR = path.join(os.homedir(), '.copilot', 'skills');
 
+function resolveBundledPath(...segments: string[]): string {
+  // In packaged Electron apps, `APP_ROOT` typically points at `.../Resources/app.asar`.
+  // Node can "see" files inside the asar virtual filesystem, but external processes
+  // (python/bash) cannot. Since we run watcher scripts via `spawn()`, we must prefer
+  // `app.asar.unpacked` whenever possible.
+  if (APP_ROOT.endsWith('.asar')) {
+    const unpacked = path.join(`${APP_ROOT}.unpacked`, ...segments);
+    if (fs.existsSync(unpacked)) return unpacked;
+  }
+
+  const direct = path.join(APP_ROOT, ...segments);
+  if (fs.existsSync(direct)) return direct;
+  return direct;
+}
+
+type AppSettings = {
+  ttsWatcher?: {
+    enabled?: boolean;
+  };
+};
+
+const APP_SETTINGS_FILE = path.join(DATA_DIR, 'app-settings.json');
+const TTS_ENV_FILE = path.join(DATA_DIR, 'tts.env');
+
+async function loadAppSettings(): Promise<AppSettings> {
+  try {
+    const raw = await fs.promises.readFile(APP_SETTINGS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (err: any) {
+    return {};
+  }
+}
+
+async function saveAppSettings(settings: AppSettings): Promise<void> {
+  await fs.promises.mkdir(path.dirname(APP_SETTINGS_FILE), { recursive: true });
+  await fs.promises.writeFile(APP_SETTINGS_FILE, JSON.stringify(settings, null, 2));
+}
+
+const TTS_WATCHER_SCRIPT = resolveBundledPath('backend', 'scripts', 'codex-session-watch-tts.py');
+const TTS_WATCHER_LOCK_FILE = path.join(DATA_DIR, 'codex-session-watch-tts.lock');
+const TTS_WATCHER_LOG_FILE = path.join(DATA_DIR, 'codex-session-watch-tts.log');
+const TTS_WATCHER_RATE_STATE_FILE = path.join(DATA_DIR, 'codex-tts-rate-state.txt');
+
+let ttsWatcherProc: ReturnType<typeof spawn> | null = null;
+let ttsWatcherEnabled = false;
+let ttsWatcherStartedAt: string | null = null;
+let ttsWatcherLastError: string | null = null;
+
+async function hasOpenAiApiKeyConfigured(): Promise<boolean> {
+  // Allow either:
+  // - an explicit environment variable (useful for dev), or
+  // - the app-managed env file (Electron menu writes it).
+  if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim()) {
+    return true;
+  }
+  try {
+    const raw = await fs.promises.readFile(TTS_ENV_FILE, 'utf8');
+    return /\bOPENAI_API_KEY\s*=\s*.+/i.test(raw);
+  } catch (err) {
+    return false;
+  }
+}
+
+function isProcRunning(proc: ReturnType<typeof spawn> | null): proc is ReturnType<typeof spawn> {
+  return Boolean(proc && proc.exitCode === null && !proc.killed);
+}
+
+async function startTtsWatcher(): Promise<void> {
+  if (isProcRunning(ttsWatcherProc)) {
+    return;
+  }
+
+  ttsWatcherLastError = null;
+  ttsWatcherStartedAt = null;
+
+  try {
+    await fs.promises.access(TTS_WATCHER_SCRIPT, fs.constants.R_OK);
+  } catch (err: any) {
+    ttsWatcherLastError = `Watcher script not found: ${TTS_WATCHER_SCRIPT}`;
+    return;
+  }
+
+  await fs.promises.mkdir(DATA_DIR, { recursive: true });
+
+  const env = {
+    ...process.env,
+    // Keep outputs deterministic and local to Session Harbor.
+    CODEX_TTS_LOCK_FILE: process.env.CODEX_TTS_LOCK_FILE || TTS_WATCHER_LOCK_FILE,
+    CODEX_TTS_LOG_FILE: process.env.CODEX_TTS_LOG_FILE || TTS_WATCHER_LOG_FILE,
+    CODEX_TTS_RATE_STATE_FILE: process.env.CODEX_TTS_RATE_STATE_FILE || TTS_WATCHER_RATE_STATE_FILE,
+    // App-managed env file (Electron menu writes this) so users don't need to export secrets in shells.
+    CODEX_TTS_ENV_PATH: process.env.CODEX_TTS_ENV_PATH || TTS_ENV_FILE,
+    // So notify script can resolve `.env` and write output to a writable location by default.
+    CODEX_TTS_BASE_DIR: process.env.CODEX_TTS_BASE_DIR || (APP_ROOT.endsWith('.asar') ? DATA_DIR : APP_ROOT),
+  };
+
+  const outFd = fs.openSync(TTS_WATCHER_LOG_FILE, 'a');
+  const proc = spawn('python3', [TTS_WATCHER_SCRIPT], {
+    env,
+    stdio: ['ignore', outFd, outFd],
+  });
+
+  ttsWatcherProc = proc;
+  ttsWatcherStartedAt = new Date().toISOString();
+
+  proc.on('error', (err: any) => {
+    ttsWatcherLastError = err?.message || String(err);
+  });
+
+  proc.on('exit', (code, signal) => {
+    if (ttsWatcherProc === proc) {
+      ttsWatcherProc = null;
+    }
+    if (code && code !== 0) {
+      ttsWatcherLastError = `Watcher exited with code ${code}${signal ? ` (signal ${signal})` : ''}`;
+    }
+  });
+}
+
+async function stopTtsWatcher(): Promise<void> {
+  const proc = ttsWatcherProc;
+  if (proc && proc.exitCode === null && !proc.killed) {
+    proc.kill('SIGTERM');
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        try {
+          proc.kill('SIGKILL');
+        } catch (err) {
+          // ignore
+        }
+        resolve();
+      }, 1500);
+      proc.once('exit', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+  }
+  ttsWatcherProc = null;
+}
+
+async function setTtsWatcherEnabled(enabled: boolean): Promise<void> {
+  if (enabled) {
+    const hasKey = await hasOpenAiApiKeyConfigured();
+    if (!hasKey) {
+      ttsWatcherLastError = 'OpenAI API key is not set. Use the menu bar: Set OpenAI API Key…';
+      ttsWatcherEnabled = false;
+      await stopTtsWatcher();
+      throw new Error(ttsWatcherLastError);
+    }
+    ttsWatcherEnabled = true;
+    const settings = await loadAppSettings();
+    settings.ttsWatcher = settings.ttsWatcher || {};
+    settings.ttsWatcher.enabled = true;
+    await saveAppSettings(settings);
+    await startTtsWatcher();
+  } else {
+    ttsWatcherEnabled = false;
+    const settings = await loadAppSettings();
+    settings.ttsWatcher = settings.ttsWatcher || {};
+    settings.ttsWatcher.enabled = false;
+    await saveAppSettings(settings);
+    await stopTtsWatcher();
+  }
+}
+
+async function initTtsWatcherFromSettings(): Promise<void> {
+  const settings = await loadAppSettings();
+  ttsWatcherEnabled = Boolean(settings.ttsWatcher?.enabled);
+  if (ttsWatcherEnabled) {
+    await startTtsWatcher();
+  }
+}
+
 let cachedSessions: any[] = [];
 let lastScanAt = 0;
 let cachedClaudeSessions: any[] = [];
@@ -2051,6 +2226,50 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (pathname === '/api/tts-watcher') {
+    if (req.method === 'GET') {
+      sendJson(res, 200, {
+        enabled: ttsWatcherEnabled,
+        running: isProcRunning(ttsWatcherProc),
+        pid: isProcRunning(ttsWatcherProc) ? ttsWatcherProc.pid : null,
+        startedAt: ttsWatcherStartedAt,
+        lastError: ttsWatcherLastError,
+        logFile: TTS_WATCHER_LOG_FILE,
+      });
+      return;
+    }
+
+    if (req.method === 'POST') {
+      let payload;
+      try {
+        payload = await readJsonBody(req);
+      } catch (err) {
+        sendJson(res, 400, { error: 'Invalid JSON.' });
+        return;
+      }
+      const enabled = Boolean(payload.enabled);
+      try {
+        await setTtsWatcherEnabled(enabled);
+      } catch (err: any) {
+        sendJson(res, 400, { error: err?.message || 'Failed to update Speech Watcher setting.' });
+        return;
+      }
+      sendJson(res, 200, {
+        ok: true,
+        enabled: ttsWatcherEnabled,
+        running: isProcRunning(ttsWatcherProc),
+        pid: isProcRunning(ttsWatcherProc) ? ttsWatcherProc.pid : null,
+        startedAt: ttsWatcherStartedAt,
+        lastError: ttsWatcherLastError,
+        logFile: TTS_WATCHER_LOG_FILE,
+      });
+      return;
+    }
+
+    sendJson(res, 405, { error: 'Method not allowed.' });
+    return;
+  }
+
   if (pathname === '/status') {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const response = { status: 'ok', service: 'session-harbor' };
@@ -2097,4 +2316,13 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`Codex session browser running at http://${HOST}:${PORT}`);
   console.log(`Reading sessions from ${SESSIONS_DIR}`);
+});
+
+void initTtsWatcherFromSettings();
+
+process.on('SIGINT', () => {
+  void stopTtsWatcher().finally(() => process.exit(0));
+});
+process.on('SIGTERM', () => {
+  void stopTtsWatcher().finally(() => process.exit(0));
 });

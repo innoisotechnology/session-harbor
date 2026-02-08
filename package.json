@@ -37,10 +37,15 @@
       "dist/**",
       "frontend/dist/**",
       "public/**",
+      "assets/**",
       "package.json",
-      "clis/session-harbor/dist/**"
+      "clis/session-harbor/dist/**",
+      "backend/scripts/**"
     ],
     "asar": true,
+    "asarUnpack": [
+      "backend/scripts/**"
+    ],
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "assets/icon/icon-1024.png",
